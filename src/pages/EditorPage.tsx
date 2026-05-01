@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useBlocker } from 'react-router-dom';
 import { api } from '../api';
-import type { Pipeline, Stage, Step, Selection } from '../types';
+import type { Pipeline, Stage, Step, Selection, EnvVar } from '../types';
 import StageFlow from '../components/StageFlow';
 import ShellEditor from '../components/ShellEditor';
 import SandboxModal from '../components/SandboxModal';
@@ -12,6 +12,7 @@ const emptyPipeline = (): Pipeline => ({
   id: '',
   name: '',
   description: '',
+  env: [],
   stages: [],
 });
 
@@ -154,6 +155,32 @@ export default function EditorPage() {
       ),
     }));
 
+  const reorderStage = (from: number, to: number) => {
+    if (from === to) return;
+    update(prev => {
+      const stages = [...prev.stages];
+      const [item] = stages.splice(from, 1);
+      stages.splice(to, 0, item);
+      return { ...prev, stages };
+    });
+    setSelection({ type: 'stage', si: to });
+  };
+
+  const reorderStep = (si: number, from: number, to: number) => {
+    if (from === to) return;
+    update(prev => ({
+      ...prev,
+      stages: prev.stages.map((s, i) => {
+        if (i !== si) return s;
+        const steps = [...s.steps];
+        const [item] = steps.splice(from, 1);
+        steps.splice(to, 0, item);
+        return { ...s, steps };
+      }),
+    }));
+    setSelection({ type: 'step', si, sj: to });
+  };
+
   const save = async () => {
     if (!p.name.trim()) {
       setNameError(true);
@@ -218,6 +245,63 @@ export default function EditorPage() {
                 <button className="btn btn-primary btn-sm" onClick={addStage}>+ 添加第一个阶段</button>
               </div>
             )}
+
+            {/* Env vars editor */}
+            <div className="pt-2 border-t border-base-200">
+              <div className="flex items-center justify-between mb-2">
+                <span className="label-text font-medium">环境变量</span>
+                <button
+                  className="btn btn-ghost btn-xs gap-1"
+                  onClick={() => setPipeline(prev => prev ? { ...prev, env: [...(prev.env ?? []), { key: '', value: '' }] } : prev)}
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  添加
+                </button>
+              </div>
+              {(p.env ?? []).length === 0 ? (
+                <p className="text-xs text-base-content/35">执行时自动 export，所有步骤可直接使用 $KEY</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {(p.env ?? []).map((ev: EnvVar, i: number) => (
+                    <div key={i} className="flex gap-1.5 items-center">
+                      <input
+                        type="text"
+                        className="input input-bordered input-xs font-mono w-32 flex-shrink-0"
+                        placeholder="KEY"
+                        value={ev.key}
+                        onChange={e => setPipeline(prev => {
+                          if (!prev) return prev;
+                          const env = [...prev.env];
+                          env[i] = { ...env[i], key: e.target.value.replace(/[^A-Za-z0-9_]/g, '').toUpperCase() };
+                          return { ...prev, env };
+                        })}
+                      />
+                      <span className="text-base-content/30 text-xs">=</span>
+                      <input
+                        type="text"
+                        className="input input-bordered input-xs font-mono flex-1 min-w-0"
+                        placeholder="value"
+                        value={ev.value}
+                        onChange={e => setPipeline(prev => {
+                          if (!prev) return prev;
+                          const env = [...prev.env];
+                          env[i] = { ...env[i], value: e.target.value };
+                          return { ...prev, env };
+                        })}
+                      />
+                      <button
+                        className="btn btn-ghost btn-xs text-error/60 hover:text-error px-1"
+                        onClick={() => setPipeline(prev => {
+                          if (!prev) return prev;
+                          const env = prev.env.filter((_, j) => j !== i);
+                          return { ...prev, env };
+                        })}
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -420,6 +504,8 @@ export default function EditorPage() {
                 onDeleteStep={deleteStep}
                 onMoveStage={moveStage}
                 onMoveStep={moveStep}
+                onReorderStage={reorderStage}
+                onReorderStep={reorderStep}
               />
             </div>
           )}

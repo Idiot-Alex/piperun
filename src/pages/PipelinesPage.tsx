@@ -4,6 +4,29 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { api } from '../api';
 import type { Pipeline, PipelineRun } from '../types';
 
+function validateYaml(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'YAML 顶层必须是对象';
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.name !== 'string' || !obj.name.trim()) return '缺少必填字段 name（字符串）';
+  if (obj.stages !== undefined && !Array.isArray(obj.stages)) return 'stages 必须是数组';
+  const stages = (Array.isArray(obj.stages) ? obj.stages : []) as unknown[];
+  for (let si = 0; si < stages.length; si++) {
+    const stage = stages[si];
+    if (!stage || typeof stage !== 'object' || Array.isArray(stage)) return `阶段 ${si + 1} 格式错误（必须是对象）`;
+    const s = stage as Record<string, unknown>;
+    if (s.steps !== undefined && !Array.isArray(s.steps)) return `阶段 ${si + 1} 的 steps 必须是数组`;
+    const steps = (Array.isArray(s.steps) ? s.steps : []) as unknown[];
+    for (let sj = 0; sj < steps.length; sj++) {
+      const step = steps[sj];
+      if (!step || typeof step !== 'object' || Array.isArray(step)) return `阶段 ${si + 1} 步骤 ${sj + 1} 格式错误（必须是对象）`;
+      const st = step as Record<string, unknown>;
+      if (st.command !== undefined && typeof st.command !== 'string') return `阶段 ${si + 1} 步骤 ${sj + 1} 的 command 必须是字符串`;
+    }
+  }
+  if (obj.env !== undefined && !Array.isArray(obj.env)) return 'env 必须是数组';
+  return null;
+}
+
 export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [runs, setRuns] = useState<PipelineRun[]>([]);
@@ -105,9 +128,16 @@ export default function PipelinesPage() {
     e.target.value = '';
     try {
       const text = await file.text();
-      const raw = yamlLoad(text) as Record<string, unknown>;
-      if (!raw || typeof raw !== 'object' || typeof raw.name !== 'string') {
-        setDeleteError('无效的 YAML 格式');
+      let raw: unknown;
+      try {
+        raw = yamlLoad(text);
+      } catch (yamlErr) {
+        setDeleteError(`YAML 解析失败：${yamlErr instanceof Error ? yamlErr.message : String(yamlErr)}`);
+        return;
+      }
+      const validationError = validateYaml(raw);
+      if (validationError) {
+        setDeleteError(`导入失败：${validationError}`);
         return;
       }
       await api.createPipeline(raw as unknown as Pipeline);

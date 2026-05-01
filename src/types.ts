@@ -11,10 +11,16 @@ export interface Stage {
   steps: Step[];
 }
 
+export interface EnvVar {
+  key: string;
+  value: string;
+}
+
 export interface Pipeline {
   id: string;
   name: string;
   description: string;
+  env: EnvVar[];
   stages: Stage[];
   createdAt?: string;
   updatedAt?: string;

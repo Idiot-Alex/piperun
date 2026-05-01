@@ -272,6 +272,24 @@ export default function RunPage() {
               );
             })}
           </div>
+          {/* Pipeline env vars */}
+          {(pipeline.env ?? []).length > 0 && (
+            <details className="border-t border-base-300 group">
+              <summary className="px-4 py-2 text-[11px] font-semibold text-base-content/35 uppercase tracking-widest cursor-pointer select-none hover:text-base-content/60 list-none flex items-center justify-between">
+                <span>环境变量 ({pipeline.env.length})</span>
+                <span className="group-open:rotate-180 transition-transform text-base-content/25">▾</span>
+              </summary>
+              <div className="px-4 pb-2 flex flex-col gap-0.5">
+                {pipeline.env.map(ev => (
+                  <div key={ev.key} className="flex items-baseline gap-1 text-[10px] font-mono leading-snug">
+                    <span className="text-violet-500/70 flex-shrink-0">{ev.key}</span>
+                    <span className="text-base-content/25">=</span>
+                    <span className="text-base-content/50 truncate" title={ev.value}>{ev.value || '""'}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
           {/* Total run time footer */}
           {totalDuration !== null && (
             <div className="px-4 py-2 border-t border-base-300 flex-shrink-0">

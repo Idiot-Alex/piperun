@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import type { Stage, Selection } from '../types';
 
 interface Props {
@@ -10,13 +11,34 @@ interface Props {
   onDeleteStep: (si: number, sj: number) => void;
   onMoveStage: (si: number, dir: -1 | 1) => void;
   onMoveStep: (si: number, sj: number, dir: -1 | 1) => void;
+  onReorderStage?: (from: number, to: number) => void;
+  onReorderStep?: (si: number, from: number, to: number) => void;
 }
+
+type DragSrc =
+  | { type: 'stage'; si: number }
+  | { type: 'step'; si: number; sj: number };
+
+type DragOver =
+  | { type: 'stage'; si: number }
+  | { type: 'step'; si: number; sj: number }
+  | null;
 
 export default function StageFlow({
   stages, selection,
   onSelectStage, onSelectStep, onAddStep,
   onDeleteStage, onDeleteStep, onMoveStage, onMoveStep,
+  onReorderStage, onReorderStep,
 }: Props) {
+  const dragSrc = useRef<DragSrc | null>(null);
+  const [dragOver, setDragOver] = useState<DragOver>(null);
+
+  const isDragOverStage = (si: number) =>
+    dragOver?.type === 'stage' && dragOver.si === si;
+
+  const isDragOverStep = (si: number, sj: number) =>
+    dragOver?.type === 'step' && dragOver.si === si && dragOver.sj === sj;
+
   return (
     <div className="space-y-2">
       {stages.map((stage, si) => {
@@ -26,14 +48,49 @@ export default function StageFlow({
             {si > 0 && (
               <div className="text-center text-base-content/20 text-xs py-1 select-none">↓</div>
             )}
-            <div className={`rounded-xl border transition-colors overflow-hidden
-              ${isStageSelected ? 'border-primary/60 bg-base-100' : 'border-base-300 bg-base-100'}`}>
+            <div
+              className={`rounded-xl border transition-colors overflow-hidden
+                ${isStageSelected ? 'border-primary/60 bg-base-100' : 'border-base-300 bg-base-100'}
+                ${isDragOverStage(si) ? 'ring-2 ring-primary/40 border-primary/40' : ''}`}
+              onDragOver={e => {
+                if (dragSrc.current?.type !== 'stage') return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                setDragOver({ type: 'stage', si });
+              }}
+              onDragLeave={e => {
+                if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+                  setDragOver(null);
+                }
+              }}
+              onDrop={e => {
+                e.preventDefault();
+                setDragOver(null);
+                const src = dragSrc.current;
+                if (!src || src.type !== 'stage' || src.si === si) return;
+                onReorderStage?.(src.si, si);
+                dragSrc.current = null;
+              }}
+            >
               {/* Stage header */}
               <div
+                draggable
+                onDragStart={e => {
+                  dragSrc.current = { type: 'stage', si };
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('text/plain', `stage:${si}`);
+                }}
+                onDragEnd={() => { dragSrc.current = null; setDragOver(null); }}
                 className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors group/stage
                   ${isStageSelected ? 'bg-primary/10' : 'hover:bg-base-200'}`}
                 onClick={() => onSelectStage(si)}
               >
+                {/* Drag handle */}
+                <span
+                  className="text-base-content/20 hover:text-base-content/50 cursor-grab active:cursor-grabbing select-none text-sm flex-shrink-0"
+                  title="拖拽排序"
+                  onClick={e => e.stopPropagation()}
+                >⠿</span>
                 <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0
                   ${isStageSelected ? 'bg-primary text-primary-content' : 'bg-base-300 text-base-content/60'}`}>
                   {si + 1}
@@ -77,10 +134,42 @@ export default function StageFlow({
                   return (
                     <div
                       key={step.id}
-                      className={`flex items-center gap-2 pl-4 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors group/step mt-1
-                        ${isStepSelected ? 'bg-primary/10 text-primary' : 'hover:bg-base-200 text-base-content/50'}`}
+                      draggable
+                      onDragStart={e => {
+                        dragSrc.current = { type: 'step', si, sj };
+                        e.dataTransfer.effectAllowed = 'move';
+                        e.dataTransfer.setData('text/plain', `step:${si}:${sj}`);
+                        e.stopPropagation();
+                      }}
+                      onDragEnd={() => { dragSrc.current = null; setDragOver(null); }}
+                      onDragOver={e => {
+                        const src = dragSrc.current;
+                        if (!src || src.type !== 'step' || src.si !== si) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.dataTransfer.dropEffect = 'move';
+                        setDragOver({ type: 'step', si, sj });
+                      }}
+                      onDragLeave={() => setDragOver(null)}
+                      onDrop={e => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDragOver(null);
+                        const src = dragSrc.current;
+                        if (!src || src.type !== 'step' || src.si !== si || src.sj === sj) return;
+                        onReorderStep?.(si, src.sj, sj);
+                        dragSrc.current = null;
+                      }}
+                      className={`flex items-center gap-2 pl-2 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors group/step mt-1
+                        ${isStepSelected ? 'bg-primary/10 text-primary' : 'hover:bg-base-200 text-base-content/50'}
+                        ${isDragOverStep(si, sj) ? 'ring-1 ring-primary/40' : ''}`}
                       onClick={e => { e.stopPropagation(); onSelectStep(si, sj); }}
                     >
+                      {/* Step drag handle */}
+                      <span
+                        className="text-base-content/20 hover:text-base-content/50 cursor-grab active:cursor-grabbing select-none text-xs flex-shrink-0"
+                        onClick={e => e.stopPropagation()}
+                      >⠿</span>
                       <span className={`text-xs flex-shrink-0 ${isStepSelected ? 'text-primary' : 'text-base-content/30'}`}>
                         •
                       </span>
@@ -131,3 +220,4 @@ export default function StageFlow({
     </div>
   );
 }
+

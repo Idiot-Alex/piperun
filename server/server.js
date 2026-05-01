@@ -1,5 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -81,6 +82,10 @@ function sanitizePipeline(p) {
     id: p.id || uid(),
     name: String(p.name ?? '').slice(0, 200),
     description: String(p.description ?? '').slice(0, 500),
+    env: (Array.isArray(p.env) ? p.env : []).map(e => ({
+      key: String(e.key ?? '').slice(0, 200).replace(/[^A-Za-z0-9_]/g, ''),
+      value: String(e.value ?? '').slice(0, 2000),
+    })).filter(e => e.key),
     stages: (Array.isArray(p.stages) ? p.stages : []).map(stage => ({
       id: String(stage.id || uid()),
       name: String(stage.name ?? '').slice(0, 200),
@@ -102,7 +107,8 @@ function sqEscape(str) {
 }
 
 // ── Pipeline executor ────────────────────────────────────────────────────────
-function buildBashScript(stages) {
+function buildBashScript(pipeline) {
+  const { stages, env = [] } = pipeline;
   const lines = [
     'set -eo pipefail',
     'export FORCE_COLOR=1',
@@ -112,6 +118,14 @@ function buildBashScript(stages) {
     '_capvars() { compgen -e | grep -v "^_" | sort 2>/dev/null || true; }',
     '',
   ];
+  // Inject pipeline-level env vars
+  if (env.length > 0) {
+    lines.push('# ── Pipeline environment variables ──────────────────────────────');
+    env.forEach(({ key, value }) => {
+      lines.push(`export ${key}=${sqEscape(value) ? `'${sqEscape(value)}'` : "''"}`);
+    });
+    lines.push('');
+  }
   stages.forEach((stage, si) => {
     const stageName = sqEscape(stage.name || '未命名');
     lines.push(`printf '\\033[1;34m╔══ 阶段 ${si + 1}: %s ══╗\\033[0m\\n' '${stageName}'`);
@@ -288,6 +302,7 @@ const wss = new WebSocketServer({ noServer: true });
 function handleSandbox(ws) {
   let child = null;
   let timer = null;
+  let cleanup = null;
 
   ws.once('message', (data) => {
     let cmd, cols = 120, rows = 30;
@@ -307,14 +322,28 @@ function handleSandbox(ws) {
       return;
     }
 
+    // Create an isolated temp directory for this sandbox session
+    const sandboxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'piperun-sandbox-'));
+
+    cleanup = () => {
+      try { fs.rmSync(sandboxDir, { recursive: true, force: true }); } catch { /* noop */ }
+    };
+
+    // Safe env: strip HOME/USER so scripts can't easily target real user dirs
+    const safeEnv = {
+      PATH: process.env.PATH,
+      LANG: process.env.LANG ?? 'en_US.UTF-8',
+      FORCE_COLOR: '1',
+      TERM: 'xterm-256color',
+      COLUMNS: String(cols),
+      LINES: String(rows),
+      TMPDIR: sandboxDir,
+      HOME: sandboxDir,
+    };
+
     child = spawn('bash', ['-c', cmd], {
-      env: {
-        ...process.env,
-        FORCE_COLOR: '1',
-        TERM: 'xterm-256color',
-        COLUMNS: String(cols),
-        LINES: String(rows),
-      },
+      env: safeEnv,
+      cwd: sandboxDir,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     child.stdin.end();
@@ -331,6 +360,7 @@ function handleSandbox(ws) {
 
     child.on('close', code => {
       clearTimeout(timer);
+      cleanup();
       const msg = code === 0
         ? '\r\n\x1b[32m✓ 完成 (退出码 0)\x1b[0m\r\n'
         : `\r\n\x1b[31m✗ 退出码: ${code}\x1b[0m\r\n`;
@@ -342,6 +372,7 @@ function handleSandbox(ws) {
   ws.on('close', () => {
     clearTimeout(timer);
     try { child?.kill('SIGTERM'); } catch { /* noop */ }
+    cleanup?.();
   });
 }
 
@@ -379,7 +410,7 @@ wss.on('connection', (ws, req) => {
   }
 
   runningPipelineId = pipelineId;
-  const script = buildBashScript(pipeline.stages);
+  const script = buildBashScript(pipeline);
 
   // Wait for the initial RESIZE message so we know the terminal dimensions
   // before spawning bash. If no RESIZE arrives within 300ms, use defaults.
