@@ -35,7 +35,7 @@ export default function SandboxModal({ command, onClose }: Props) {
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
       fontSize: 13,
       lineHeight: 1.45,
-      cursorBlink: false,
+      cursorBlink: true,
       convertEol: true,
       scrollback: 3000,
     });
@@ -56,6 +56,11 @@ export default function SandboxModal({ command, onClose }: Props) {
       ws.send(JSON.stringify({ cmd: command, cols: term.cols, rows: term.rows }));
     };
 
+    // Forward terminal keystrokes to bash stdin
+    const inputDisposable = term.onData(data => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    });
+
     ws.onmessage = (e: MessageEvent) => {
       const data =
         typeof e.data === 'string'
@@ -66,6 +71,7 @@ export default function SandboxModal({ command, onClose }: Props) {
 
     return () => {
       ro.disconnect();
+      inputDisposable.dispose();
       ws.close();
       term.dispose();
     };

@@ -14,6 +14,8 @@ export interface XTermHandle {
   start: (pipelineId: string) => void;
   stop: () => void;
   clear: () => void;
+  getBuffer: () => string;
+  replay: (data: string) => void;
 }
 
 interface Props {
@@ -30,6 +32,7 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const outputBufferRef = useRef<string>('');
 
   // Keep callbacks fresh without re-creating imperative handle
   const onStepStatusRef = useRef(onStepStatus);
@@ -87,6 +90,7 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
 
       wsRef.current?.close();
       term.write('\x1b[2J\x1b[H');
+      outputBufferRef.current = '';
 
       onRunningChangeRef.current(true);
 
@@ -124,7 +128,10 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
             } catch { /* ignore malformed */ }
             return '';
           });
-        if (out) termRef.current.write(out);
+        if (out) {
+          termRef.current.write(out);
+          outputBufferRef.current += out;
+        }
         termRef.current.scrollToBottom();
       };
 
@@ -142,9 +149,20 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
     clear() {
       termRef.current?.clear();
       termRef.current?.write('\x1b[2J\x1b[H');
+      outputBufferRef.current = '';
     },
     stop() {
       wsRef.current?.close();
+    },
+    getBuffer() {
+      return outputBufferRef.current;
+    },
+    replay(data: string) {
+      const term = termRef.current;
+      if (!term) return;
+      term.write('\x1b[2J\x1b[H');
+      term.write(data);
+      term.scrollToBottom();
     },
   }));
 

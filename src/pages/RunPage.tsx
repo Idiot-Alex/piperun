@@ -4,6 +4,9 @@ import { api } from '../api';
 import type { Pipeline, StepStatus } from '../types';
 import XTerm, { type XTermHandle } from '../components/XTerm';
 
+// Module-level cache: persists across navigation within the same session
+const terminalOutputCache = new Map<string, string>();
+
 type StatusMap = Record<string, StepStatus>; // key: `${si}:${sj}`
 type DurationMap = Record<string, number>; // key: `${si}:${sj}`, value: ms
 type VarsMap = Record<string, Record<string, string>>; // key: `${si}:${sj}`
@@ -43,7 +46,12 @@ export default function RunPage() {
   const runStartRef = useRef<number>(0);
 
   useEffect(() => {
-    if (id) api.getPipeline(id).then(setPipeline).catch(console.error);
+    if (id) api.getPipeline(id).then(p => {
+      setPipeline(p);
+      // Restore cached output if exists
+      const cached = terminalOutputCache.get(id);
+      if (cached) xtermRef.current?.replay(cached);
+    }).catch(console.error);
   }, [id]);
 
   const handleStepStatus = useCallback((si: number, sj: number, status: StepStatus, durationMs?: number) => {
@@ -68,6 +76,11 @@ export default function RunPage() {
     } else {
       const dur = Date.now() - runStartRef.current;
       setTotalDuration(dur);
+      // Save terminal output to cache when run finishes
+      if (id) {
+        const buf = xtermRef.current?.getBuffer();
+        if (buf) terminalOutputCache.set(id, buf);
+      }
       // Derive result from statusMap snapshot via a callback to get latest state
       setStatusMap(prev => {
         const statuses = Object.values(prev);

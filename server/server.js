@@ -346,11 +346,18 @@ function handleSandbox(ws) {
       cwd: sandboxDir,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    child.stdin.end();
+    // Keep stdin open — subsequent WS messages will be piped in
 
     const send = (d) => { if (ws.readyState === 1) ws.send(d.toString()); };
     child.stdout.on('data', send);
     child.stderr.on('data', send);
+
+    // Pipe subsequent WebSocket messages (keystrokes) to bash stdin
+    ws.on('message', (data) => {
+      if (child && child.stdin.writable) {
+        child.stdin.write(data.toString());
+      }
+    });
 
     timer = setTimeout(() => {
       try { child?.kill('SIGTERM'); } catch { /* noop */ }
