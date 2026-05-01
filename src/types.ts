@@ -3,6 +3,7 @@ export interface Step {
   name: string;
   command: string;
   continueOnError: boolean;
+  timeout?: number; // seconds, 0 = no timeout
 }
 
 export interface Stage {

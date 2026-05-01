@@ -21,6 +21,7 @@ function validateYaml(raw: unknown): string | null {
       if (!step || typeof step !== 'object' || Array.isArray(step)) return `阶段 ${si + 1} 步骤 ${sj + 1} 格式错误（必须是对象）`;
       const st = step as Record<string, unknown>;
       if (st.command !== undefined && typeof st.command !== 'string') return `阶段 ${si + 1} 步骤 ${sj + 1} 的 command 必须是字符串`;
+      if (st.timeout !== undefined && (typeof st.timeout !== 'number' || st.timeout < 0)) return `阶段 ${si + 1} 步骤 ${sj + 1} 的 timeout 必须是非负整数（秒）`;
     }
   }
   if (obj.env !== undefined && !Array.isArray(obj.env)) return 'env 必须是数组';
@@ -109,6 +110,7 @@ export default function PipelinesPage() {
           name: st.name,
           command: st.command || undefined,
           continueOnError: st.continueOnError || undefined,
+          timeout: st.timeout ? st.timeout : undefined,
         })),
       })),
     };

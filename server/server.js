@@ -94,6 +94,8 @@ function sanitizePipeline(p) {
         name: String(step.name ?? '').slice(0, 200),
         command: String(step.command ?? '').slice(0, 50000),
         continueOnError: Boolean(step.continueOnError),
+        timeout: (typeof step.timeout === 'number' && step.timeout > 0)
+          ? Math.min(Math.floor(step.timeout), 86400) : undefined,
       })),
     })),
     createdAt: p.createdAt ?? new Date().toISOString(),
@@ -116,6 +118,8 @@ function buildBashScript(pipeline) {
     '_ms() { python3 -c "import time; print(int(time.time()*1000))" 2>/dev/null || echo $(( $(date +%s) * 1000 )); }',
     // Helper: capture exported user var names (skip vars starting with _)
     '_capvars() { compgen -e | grep -v "^_" | sort 2>/dev/null || true; }',
+    // Helper: run a command with a wall-clock timeout (pure bash, macOS compatible)
+    '_with_timeout() { local _t=$1; shift; "$@" & local _p=$!; ( sleep "$_t" && kill -TERM "$_p" 2>/dev/null; sleep 3; kill -KILL "$_p" 2>/dev/null ) & local _k=$!; wait "$_p"; local _r=$?; kill "$_k" 2>/dev/null; wait "$_k" 2>/dev/null; return $_r; };',
     '',
   ];
   // Inject pipeline-level env vars
@@ -156,13 +160,18 @@ function buildBashScript(pipeline) {
       lines.push('}');
       lines.push('_step_t0=$(_ms)');
       lines.push('_vars_before=$(_capvars)');
+      // If a per-step timeout is configured, run in a subshell via _with_timeout so
+      // the parent process is not blocked. Note: exports from timed steps don't propagate.
+      const call = (step.timeout > 0)
+        ? `_with_timeout ${step.timeout} bash -c "$(declare -f ${fnName}); ${fnName}"`
+        : fnName;
       if (step.continueOnError) {
-        lines.push(`${fnName} || true`);
+        lines.push(`${call} || true`);
         lines.push('_step_dt=$(( $(_ms) - _step_t0 ))');
         lines.push(`printf "\\x01STEP_END:${si}:${sj}:0:$_step_dt\\x01\\n"`);
       } else {
         lines.push('_st=0');
-        lines.push(`${fnName} || _st=$?`);
+        lines.push(`${call} || _st=$?`);
         lines.push('_step_dt=$(( $(_ms) - _step_t0 ))');
         lines.push(`printf "\\x01STEP_END:${si}:${sj}:$_st:$_step_dt\\x01\\n"`);
         lines.push('[ "$_st" -eq 0 ] || exit "$_st"');
@@ -384,6 +393,14 @@ function handleSandbox(ws) {
 }
 
 server.on('upgrade', (req, socket, head) => {
+  // Reject WebSocket connections from non-local origins to prevent CSRF attacks
+  const origin = req.headers.origin;
+  const ALLOWED_ORIGINS = new Set(['http://localhost:5173', 'http://localhost:3001', 'http://127.0.0.1:5173', 'http://127.0.0.1:3001']);
+  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname === '/pty') {
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
