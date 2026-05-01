@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="160" y2="160" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fff8f0"/>
+      <stop offset="100%" stop-color="#fef3c7"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#00000022"/>
+    </filter>
+  </defs>
+
+  <!-- Card -->
+  <rect width="160" height="160" rx="28" fill="url(#bg)" stroke="#e5c88a" stroke-width="1.5"/>
+
+  <!--
+    Nodes: cx=35(r=14), 80(r=17), 125(r=14)
+    node1 right: 49  node2 left: 63  gap=14  line 50->61  tip 63=63 ok
+    node2 right: 97  node3 left: 111 gap=14  line 98->109 tip 111=111 ok
+  -->
+
+  <!-- Connectors -->
+  <line x1="50" y1="80" x2="60" y2="80" stroke="#c9b99a" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M58 75.5 L63 80 L58 84.5" stroke="#c9b99a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <line x1="98" y1="80" x2="108" y2="80" stroke="#c9b99a" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M106 75.5 L111 80 L106 84.5" stroke="#c9b99a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Node 1: Done (r=14) — green + checkmark + shadow -->
+  <circle cx="35" cy="80" r="14" fill="#22c55e" filter="url(#shadow)"/>
+  <circle cx="35" cy="80" r="14" stroke="#16a34a" stroke-width="1"/>
+  <path d="M28 80 L33 85 L43 73" stroke="white" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Node 2: Running (r=17, larger = active) — blue + arc + dot + shadow -->
+  <circle cx="80" cy="80" r="17" fill="#3b82f6" filter="url(#shadow)"/>
+  <circle cx="80" cy="80" r="17" stroke="#2563eb" stroke-width="1"/>
+  <!-- track ring r=9, circ=56.55, 3/4=42.41, gap=14.14 -->
+  <circle cx="80" cy="80" r="9" stroke="white" stroke-width="2" stroke-opacity="0.3" fill="none"/>
+  <circle cx="80" cy="80" r="9" stroke="white" stroke-width="3.5" stroke-linecap="round"
+    stroke-dasharray="42.41 14.14" transform="rotate(-90 80 80)" fill="none"/>
+  <circle cx="80" cy="80" r="3.5" fill="white"/>
+
+  <!-- Node 3: Waiting (r=14) — light gray + dot + shadow -->
+  <circle cx="125" cy="80" r="14" fill="#e5e7eb" filter="url(#shadow)"/>
+  <circle cx="125" cy="80" r="14" stroke="#d1d5db" stroke-width="1"/>
+  <circle cx="125" cy="80" r="5" fill="#9ca3af"/>
+</svg>

@@ -1,0 +1,30 @@
+name: Node.js 项目构建
+description: 安装依赖、类型检查、构建、运行测试
+stages:
+  - name: 准备
+    steps:
+      - name: 检查 Node 版本
+        command: node --version && npm --version
+      - name: 安装依赖
+        command: npm ci
+  - name: 检查
+    steps:
+      - name: TypeScript 类型检查
+        command: npx tsc --noEmit
+        continueOnError: true
+      - name: Lint
+        command: npx eslint src --ext .ts,.tsx --max-warnings 0
+        continueOnError: true
+  - name: 构建
+    steps:
+      - name: 清理旧产物
+        command: rm -rf dist
+      - name: 执行构建
+        command: npm run build
+      - name: 检查产物大小
+        command: du -sh dist/
+  - name: 测试
+    steps:
+      - name: 单元测试
+        command: npm test -- --passWithNoTests
+        continueOnError: true

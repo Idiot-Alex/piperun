@@ -1,0 +1,54 @@
+name: 文件备份
+description: 将指定目录打包压缩并验证备份完整性
+stages:
+  - name: 准备
+    steps:
+      - name: 设置变量
+        command: |
+          export BACKUP_SRC="${BACKUP_SRC:-$HOME/Documents}"
+          export BACKUP_DIR="${BACKUP_DIR:-$HOME/Backups}"
+          export BACKUP_NAME="backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+          echo "备份源：$BACKUP_SRC"
+          echo "备份目录：$BACKUP_DIR"
+          echo "文件名：$BACKUP_NAME"
+          mkdir -p "$BACKUP_DIR"
+      - name: 检查源目录
+        command: |
+          export BACKUP_SRC="${BACKUP_SRC:-$HOME/Documents}"
+          if [ ! -d "$BACKUP_SRC" ]; then
+            echo "错误：源目录不存在: $BACKUP_SRC"
+            exit 1
+          fi
+          echo "源目录大小：$(du -sh "$BACKUP_SRC" | cut -f1)"
+  - name: 备份
+    steps:
+      - name: 打包压缩
+        command: |
+          export BACKUP_SRC="${BACKUP_SRC:-$HOME/Documents}"
+          export BACKUP_DIR="${BACKUP_DIR:-$HOME/Backups}"
+          export BACKUP_NAME="backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+          tar -czf "$BACKUP_DIR/$BACKUP_NAME" \
+            --exclude='*.DS_Store' \
+            --exclude='node_modules' \
+            -C "$(dirname "$BACKUP_SRC")" \
+            "$(basename "$BACKUP_SRC")"
+          echo "备份完成：$BACKUP_DIR/$BACKUP_NAME"
+      - name: 验证完整性
+        command: |
+          export BACKUP_DIR="${BACKUP_DIR:-$HOME/Backups}"
+          latest=$(ls -t "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null | head -1)
+          if [ -z "$latest" ]; then echo "未找到备份文件"; exit 1; fi
+          tar -tzf "$latest" > /dev/null && echo "验证通过：$latest" || (echo "备份文件损坏！"; exit 1)
+  - name: 清理旧备份
+    steps:
+      - name: 保留最近 5 份，删除旧备份
+        command: |
+          export BACKUP_DIR="${BACKUP_DIR:-$HOME/Backups}"
+          files=$(ls -t "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null)
+          count=$(echo "$files" | wc -l | tr -d ' ')
+          if [ "$count" -gt 5 ]; then
+            echo "$files" | tail -n +6 | xargs rm -v
+          else
+            echo "共 $count 份备份，无需清理"
+          fi
+        continueOnError: true

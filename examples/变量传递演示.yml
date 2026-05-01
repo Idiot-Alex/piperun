@@ -1,0 +1,58 @@
+name: 变量传递演示
+description: 演示 export 变量在步骤之间的传递与可视化
+
+stages:
+  - name: 初始化
+    steps:
+      - name: 设置版本与环境
+        command: |
+          export APP_VERSION="1.4.2"
+          export BUILD_ENV="production"
+          export BUILD_DATE=$(date +%Y-%m-%d)
+          echo "版本: $APP_VERSION"
+          echo "环境: $BUILD_ENV"
+          echo "日期: $BUILD_DATE"
+
+      - name: 设置构建路径
+        command: |
+          export BUILD_DIR="/tmp/demo-build-$$"
+          export OUTPUT_FILE="$BUILD_DIR/output.txt"
+          mkdir -p "$BUILD_DIR"
+          echo "构建目录: $BUILD_DIR"
+
+  - name: 构建
+    steps:
+      - name: 使用上一阶段的变量
+        command: |
+          echo "正在构建 $APP_NAME v$APP_VERSION ..."
+          echo "目标环境: $BUILD_ENV"
+          echo "构建时间: $BUILD_DATE"
+          # 写入构建产物
+          echo "build=$APP_VERSION env=$BUILD_ENV date=$BUILD_DATE" > "$OUTPUT_FILE"
+          export BUILD_STATUS="ok"
+          export ARTIFACT_PATH="$OUTPUT_FILE"
+
+      - name: 校验产物
+        command: |
+          if [ -f "$ARTIFACT_PATH" ]; then
+            echo "产物存在: $ARTIFACT_PATH"
+            cat "$ARTIFACT_PATH"
+            export VERIFY_RESULT="passed"
+          else
+            echo "产物不存在！" >&2
+            export VERIFY_RESULT="failed"
+            exit 1
+          fi
+
+  - name: 汇总
+    steps:
+      - name: 打印最终变量
+        command: |
+          echo "====== 构建汇总 ======"
+          echo "版本:     $APP_VERSION"
+          echo "环境:     $BUILD_ENV"
+          echo "状态:     $BUILD_STATUS"
+          echo "验证:     $VERIFY_RESULT"
+          echo "产物:     $ARTIFACT_PATH"
+          echo "======================"
+          export PIPELINE_RESULT="success"

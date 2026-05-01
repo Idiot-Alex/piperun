@@ -1,0 +1,36 @@
+name: 系统信息检查
+description: 收集当前机器的基本系统信息
+stages:
+  - name: 系统基础
+    steps:
+      - name: 操作系统信息
+        command: uname -a
+      - name: CPU 信息
+        command: sysctl -n machdep.cpu.brand_string 2>/dev/null || lscpu | grep 'Model name'
+      - name: 内存使用
+        command: |
+          echo "=== 内存概况 ==="
+          vm_stat 2>/dev/null | head -10 || free -h
+      - name: 磁盘使用
+        command: df -h | grep -v tmpfs
+  - name: 运行时环境
+    steps:
+      - name: Node.js 版本
+        command: node --version && npm --version
+        continueOnError: true
+      - name: Python 版本
+        command: python3 --version
+        continueOnError: true
+      - name: Git 版本
+        command: git --version
+        continueOnError: true
+      - name: Docker 版本
+        command: docker --version
+        continueOnError: true
+  - name: 网络
+    steps:
+      - name: 网络接口
+        command: ifconfig 2>/dev/null | grep -E '^[a-z]|inet ' || ip addr | grep -E '^[0-9]|inet '
+      - name: DNS 解析测试
+        command: nslookup github.com
+        continueOnError: true

@@ -1,0 +1,36 @@
+name: Git 仓库维护
+description: 清理、检查和统计 Git 仓库
+stages:
+  - name: 状态检查
+    steps:
+      - name: 当前分支
+        command: git branch --show-current
+      - name: 工作区状态
+        command: git status --short
+      - name: 最近 5 次提交
+        command: git log --oneline -5
+  - name: 统计
+    steps:
+      - name: 提交数量
+        command: git rev-list --count HEAD
+      - name: 贡献者列表
+        command: git shortlog -sn --no-merges | head -10
+      - name: 代码行数统计
+        command: git ls-files | xargs wc -l 2>/dev/null | tail -1
+        continueOnError: true
+  - name: 清理
+    steps:
+      - name: 清理无用对象
+        command: git gc --auto
+      - name: 删除已合并的本地分支
+        command: |
+          merged=$(git branch --merged main 2>/dev/null || git branch --merged master 2>/dev/null)
+          if [ -n "$merged" ]; then
+            echo "已合并分支：$merged"
+          else
+            echo "没有需要清理的已合并分支"
+          fi
+        continueOnError: true
+      - name: 清理远端已删除的追踪分支
+        command: git remote prune origin
+        continueOnError: true
