@@ -160,8 +160,13 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
     replay(data: string) {
       const term = termRef.current;
       if (!term) return;
+      // Strip protocol markers (log file contains raw bash output)
+      const stripped = data
+        .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
+        .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
+        .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '');
       term.write('\x1b[2J\x1b[H');
-      term.write(data);
+      term.write(stripped);
       term.scrollToBottom();
     },
   }));

@@ -11,6 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const PIPELINES_FILE = path.join(DATA_DIR, 'pipelines.json');
 const RUNS_FILE = path.join(DATA_DIR, 'runs.json');
+const LOGS_DIR = path.join(DATA_DIR, 'runs');
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -28,6 +29,7 @@ const MIME = {
 
 // ── Storage ──────────────────────────────────────────────────────────────────
 fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(LOGS_DIR, { recursive: true });
 if (!fs.existsSync(PIPELINES_FILE)) fs.writeFileSync(PIPELINES_FILE, '[]');
 if (!fs.existsSync(RUNS_FILE)) fs.writeFileSync(RUNS_FILE, '[]');
 
@@ -250,6 +252,19 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, runs.slice(-100).reverse());
   }
 
+  const runLogMatch = pathname.match(/^\/api\/runs\/([a-f0-9]{16})\/log$/);
+  if (runLogMatch && req.method === 'GET') {
+    const runId = runLogMatch[1];
+    const logPath = path.join(LOGS_DIR, `${runId}.log`);
+    if (!fs.existsSync(logPath)) return json(res, 404, { error: 'Log not found' });
+    const stat = fs.statSync(logPath);
+    const MAX_LOG_BYTES = 50 * 1024 * 1024;
+    const size = Math.min(stat.size, MAX_LOG_BYTES);
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': size });
+    fs.createReadStream(logPath, { start: 0, end: size - 1 }).pipe(res);
+    return;
+  }
+
   if (pathname === '/api/pipelines' && req.method === 'GET') {
     const list = readPipelines();
     list.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
@@ -436,6 +451,11 @@ wss.on('connection', (ws, req) => {
   runningPipelineId = pipelineId;
   const script = buildBashScript(pipeline);
 
+  // Pre-generate runId so the log file can be opened before bash exits
+  const runId = uid();
+  const logPath = path.join(LOGS_DIR, `${runId}.log`);
+  const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+
   // Wait for the initial RESIZE message so we know the terminal dimensions
   // before spawning bash. If no RESIZE arrives within 300ms, use defaults.
   let child = null;
@@ -459,7 +479,9 @@ wss.on('connection', (ws, req) => {
     });
 
     const send = (data) => {
-      if (ws.readyState === 1) ws.send(data.toString());
+      const str = data.toString();
+      if (ws.readyState === 1) ws.send(str);
+      logStream.write(str);
     };
 
     child.stdout.on('data', send);
@@ -467,11 +489,12 @@ wss.on('connection', (ws, req) => {
 
     child.on('close', code => {
       clearTimeout(runTimeout);
+      logStream.end();
       runningPipelineId = null;
       const finishedAt = new Date().toISOString();
       const durationMs = runStartedAt ? Date.now() - new Date(runStartedAt).getTime() : 0;
       appendRun({
-        id: uid(),
+        id: runId,
         pipelineId,
         pipelineName: pipeline.name,
         startedAt: runStartedAt,
@@ -518,6 +541,7 @@ wss.on('connection', (ws, req) => {
     clearTimeout(runTimeout);
     clearTimeout(startTimer);
     if (runningPipelineId === pipelineId) runningPipelineId = null;
+    logStream.end();
     try { child?.kill('SIGTERM'); } catch { /* noop */ }
   });
 });

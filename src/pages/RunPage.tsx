@@ -46,11 +46,25 @@ export default function RunPage() {
   const runStartRef = useRef<number>(0);
 
   useEffect(() => {
-    if (id) api.getPipeline(id).then(p => {
+    if (id) api.getPipeline(id).then(async p => {
       setPipeline(p);
-      // Restore cached output if exists
+      // 1. Try in-memory cache first (fast path, same session)
       const cached = terminalOutputCache.get(id);
-      if (cached) xtermRef.current?.replay(cached);
+      if (cached) {
+        xtermRef.current?.replay(cached);
+        return;
+      }
+      // 2. Fallback: fetch latest run log from server (persists across refresh/restart)
+      try {
+        const runs = await api.getRuns(id);
+        if (runs.length > 0) {
+          const log = await api.getRunLog(runs[0].id);
+          if (log) {
+            terminalOutputCache.set(id, log);
+            xtermRef.current?.replay(log);
+          }
+        }
+      } catch { /* no log available, terminal stays empty */ }
     }).catch(console.error);
   }, [id]);
 

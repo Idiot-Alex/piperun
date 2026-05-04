@@ -32,4 +32,10 @@ export const api = {
 
   getRuns: (pipelineId?: string) =>
     req<PipelineRun[]>(`/runs${pipelineId ? `?pipeline=${pipelineId}` : ''}`),
+
+  getRunLog: async (runId: string): Promise<string> => {
+    const r = await fetch(`${BASE}/runs/${runId}/log`);
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.text();
+  },
 };
