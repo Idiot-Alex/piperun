@@ -4,6 +4,9 @@ import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { api } from '../api';
 import type { Pipeline, PipelineRun } from '../types';
 import { pipelineToYamlData, validatePipelineYaml } from '../pipelineYaml';
+import { stripProtocolMarkers } from '../terminalProtocol';
+
+const LOG_TAIL_BYTES = 1024 * 1024;
 
 export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -13,6 +16,7 @@ export default function PipelinesPage() {
   const logModalRef = useRef<HTMLDialogElement>(null);
   const [logRun, setLogRun] = useState<PipelineRun | null>(null);
   const [logContent, setLogContent] = useState<string | null>(null);
+  const [logTruncated, setLogTruncated] = useState(false);
   const [logLoading, setLogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,13 +31,16 @@ export default function PipelinesPage() {
   const openLog = async (r: PipelineRun) => {
     setLogRun(r);
     setLogContent(null);
+    setLogTruncated(false);
     setLogLoading(true);
     logModalRef.current?.showModal();
     try {
-      const text = await api.getRunLog(r.id);
+      const { text, truncated } = await api.getRunLogTail(r.id, LOG_TAIL_BYTES);
       setLogContent(text);
+      setLogTruncated(truncated);
     } catch {
       setLogContent('（日志不存在或已被清除）');
+      setLogTruncated(false);
     } finally {
       setLogLoading(false);
     }
@@ -492,22 +499,24 @@ export default function PipelinesPage() {
                 <span className="loading loading-spinner text-neutral-content"></span>
               </div>
             ) : (
-              <pre className="text-xs font-mono text-[#d4d4d4] whitespace-pre-wrap break-all leading-5">
-                {logContent
-                  // eslint-disable-next-line no-control-regex
-                  ? logContent
-                      // eslint-disable-next-line no-control-regex
-                      .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
-	                      .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
-	                      .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
-	                      .replace(/\x01RUN_END:(?:success|failed|timeout|stopped)\x01\r?\n?/g, '')
-                      // Strip all ANSI/VT escape sequences:
-                      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (title, hyperlinks)
-                      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')            // CSI (colors, cursor)
-                      .replace(/\x1b[^[\]]/g, '')                        // bare ESC (reverse index, etc.)
-                      .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-                  : ''}
-              </pre>
+              <>
+                {logTruncated && (
+                  <div className="mb-3 text-[11px] text-warning">
+                    仅显示最近 {Math.round(LOG_TAIL_BYTES / 1024 / 1024)} MB 日志
+                  </div>
+                )}
+                <pre className="text-xs font-mono text-[#d4d4d4] whitespace-pre-wrap break-all leading-5">
+                  {logContent
+                    // eslint-disable-next-line no-control-regex
+                    ? stripProtocolMarkers(logContent)
+                        // Strip all ANSI/VT escape sequences:
+                        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (title, hyperlinks)
+                        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')            // CSI (colors, cursor)
+                        .replace(/\x1b[^[\]]/g, '')                        // bare ESC (reverse index, etc.)
+                        .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+                    : ''}
+                </pre>
+              </>
             )}
           </div>
         </div>

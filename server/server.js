@@ -106,6 +106,12 @@ function readRuns() {
   }
 }
 
+function logReadRange(totalSize, tailBytes = 0, maxBytes = 50 * 1024 * 1024) {
+  const readSize = Math.min(totalSize, tailBytes || maxBytes);
+  const start = Math.max(0, totalSize - readSize);
+  return { start, readSize, truncated: start > 0 };
+}
+
 function appendRun(run) {
   return withLock(() => {
     const runs = readRuns();
@@ -459,10 +465,19 @@ const server = http.createServer(async (req, res) => {
     if (!fs.existsSync(logPath)) return json(res, 404, { error: 'Log not found' });
     const stat = fs.statSync(logPath);
     const MAX_LOG_BYTES = 50 * 1024 * 1024;
-    const size = Math.min(stat.size, MAX_LOG_BYTES);
-    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': size });
-    if (size === 0) { res.end(); return; }
-    fs.createReadStream(logPath, { start: 0, end: size - 1 }).pipe(res);
+    const tailParam = Number(url.searchParams.get('tail') ?? 0);
+    const tailBytes = Number.isFinite(tailParam) && tailParam > 0
+      ? Math.min(Math.floor(tailParam), MAX_LOG_BYTES)
+      : 0;
+    const { start, readSize, truncated } = logReadRange(stat.size, tailBytes, MAX_LOG_BYTES);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': readSize,
+      'X-Log-Truncated': truncated ? 'true' : 'false',
+      'X-Log-Size': String(stat.size),
+    });
+    if (readSize === 0) { res.end(); return; }
+    fs.createReadStream(logPath, { start, end: stat.size - 1 }).pipe(res);
     return;
   }
 
@@ -845,7 +860,9 @@ export {
   buildBashScript,
   sanitizePipeline,
   envExportLine,
+  logReadRange,
   sqEscape,
+  server,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

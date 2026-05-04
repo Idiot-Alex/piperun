@@ -10,6 +10,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { RunResult, StepStatus } from '../types';
 import { getToken } from '../api';
+import { parseReplayMarkers, stripProtocolMarkers } from '../terminalProtocol';
 
 export interface XTermHandle {
   start: (pipelineId: string) => void;
@@ -230,42 +231,13 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       const term = termRef.current;
       if (!term) return;
 
-      // Parse protocol markers to reconstruct step statuses for historical runs
-      const started = new Set<string>();
-      const reStart = /\x01STEP_START:(\d+):(\d+)\x01\r?\n?/g;
-      const reEnd = /\x01STEP_END:(\d+):(\d+):(\d+)(?::(\d+))?\x01\r?\n?/g;
-      const reVars = /\x01STEP_VARS:(\d+):(\d+):([^\x01]*)\x01\r?\n?/g;
-      const reRunEnd = /\x01RUN_END:(success|failed|timeout|stopped)\x01\r?\n?/g;
+      parseReplayMarkers(data, {
+        onStepStatus: (...args) => onStepStatusRef.current(...args),
+        onStepVars: (...args) => onStepVarsRef.current?.(...args),
+        onRunResult: result => onRunResultRef.current?.(result),
+      });
 
-      let m: RegExpExecArray | null;
-      while ((m = reStart.exec(data)) !== null) started.add(`${m[1]}:${m[2]}`);
-
-      while ((m = reEnd.exec(data)) !== null) {
-        const [, si, sj, code, dt] = m;
-        started.delete(`${si}:${sj}`);
-        onStepStatusRef.current(+si, +sj, +code === 0 ? 'done' : 'failed', dt !== undefined ? +dt : undefined);
-      }
-      // Steps that started but never got an END marker were interrupted mid-run
-      for (const key of started) {
-        const [si, sj] = key.split(':');
-        onStepStatusRef.current(+si, +sj, 'failed');
-      }
-      while ((m = reVars.exec(data)) !== null) {
-        try {
-          const vars = JSON.parse(m[3]) as Record<string, string>;
-          if (Object.keys(vars).length > 0) onStepVarsRef.current?.(+m[1], +m[2], vars);
-        } catch { /* ignore malformed */ }
-      }
-      while ((m = reRunEnd.exec(data)) !== null) {
-        onRunResultRef.current?.(m[1] as RunResult);
-      }
-
-      // Strip markers for terminal output
-      const stripped = data
-        .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
-        .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
-        .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
-        .replace(/\x01RUN_END:(?:success|failed|timeout|stopped)\x01\r?\n?/g, '');
+      const stripped = stripProtocolMarkers(data);
       term.write('\x1b[2J\x1b[H');
       term.write(stripped);
       term.scrollToBottom();

@@ -57,6 +57,54 @@ pnpm dev
 > 本地开发时无需配置任何环境变量，localhost 请求始终放行。
 > 生产环境建议同时设置 `API_TOKEN`、`ALLOWED_ORIGINS`，反向代理部署时再设置 `TRUST_PROXY=true`。
 
+## 生产部署示例
+
+推荐先构建前端，再用 Node.js 服务同时提供静态文件、HTTP API 和 WebSocket：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run build
+cp .env.example .env
+# 编辑 .env，至少设置 API_TOKEN、ALLOWED_ORIGINS、TRUST_PROXY=true
+pnpm start
+```
+
+示例 `.env`：
+
+```bash
+PORT=3001
+ALLOWED_ORIGINS=https://piperun.example.com
+API_TOKEN=replace-with-a-long-random-token
+TRUST_PROXY=true
+```
+
+nginx 反向代理示例：
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name piperun.example.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}
+```
+
+Caddy 反向代理示例：
+
+```caddyfile
+piperun.example.com {
+  reverse_proxy 127.0.0.1:3001
+}
+```
+
 ## 目录结构
 
 ```
@@ -103,6 +151,13 @@ stages:
         command: rsync -av dist/ user@server:/var/www/
 ```
 
+## 安全边界
+
+- PipeRun 会执行用户配置的 Shell 命令，默认定位为本机或受信任内网工具，不建议直接暴露到公网。
+- `API_TOKEN`、`ALLOWED_ORIGINS` 和 `TRUST_PROXY` 只提供基础访问控制，不等同于多用户权限隔离。
+- 沙箱试运行只隔离工作目录和部分环境变量，命令仍可访问系统可执行文件、网络和宿主机可读路径；它不是容器或虚拟机沙箱。
+- 远程部署时建议放在反向代理后，并同时设置 `API_TOKEN`、`ALLOWED_ORIGINS`、`TRUST_PROXY=true`。
+
 ## 注意事项
 
 - `server/data/` 已加入 `.gitignore`，不会提交运行数据
@@ -110,3 +165,4 @@ stages:
 - 同一时刻只支持一条流水线并发执行
 - 单条流水线最长运行时间 30 分钟，沙箱 60 秒
 - 终端输出缓冲区上限 10 MB（超出时保留最近 5 MB）
+- `continueOnError` 适用于普通非零退出状态（例如 `false` 或命令失败）；如果脚本中显式调用 `exit`，会退出整个 bash 进程，后续步骤不会继续。

@@ -16,6 +16,12 @@ export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
+export interface RunLogTail {
+  text: string;
+  truncated: boolean;
+  size: number;
+}
+
 // ── HTTP helper ───────────────────────────────────────────────────────────────
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const token = getToken();
@@ -71,6 +77,24 @@ export const api = {
     }
     if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.text();
+  },
+
+  getRunLogTail: async (runId: string, bytes: number): Promise<RunLogTail> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(`${BASE}/runs/${runId}/log?tail=${Math.max(0, Math.floor(bytes))}`, { headers });
+    if (r.status === 401) {
+      clearToken();
+      window.dispatchEvent(new Event('auth:logout'));
+      throw new Error('401 Unauthorized');
+    }
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return {
+      text: await r.text(),
+      truncated: r.headers.get('X-Log-Truncated') === 'true',
+      size: Number(r.headers.get('X-Log-Size') ?? 0),
+    };
   },
 
   deleteRun: (id: string) =>

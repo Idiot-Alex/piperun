@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { buildBashScript, envExportLine, sanitizePipeline } from './server.js';
+import { buildBashScript, envExportLine, logReadRange, sanitizePipeline } from './server.js';
 
 function runBash(script, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -107,4 +107,17 @@ test('step timeout fails the step', async () => {
   const { code, stdout } = await runBash(buildBashScript(pipeline), 7000);
   assert.notEqual(code, 0);
   assert.match(stdout, /\x01STEP_END:0:0:(?!0:)\d+:\d+\x01/);
+});
+
+test('logReadRange returns only the requested tail when possible', () => {
+  assert.deepEqual(logReadRange(10, 4, 50), {
+    start: 6,
+    readSize: 4,
+    truncated: true,
+  });
+  assert.deepEqual(logReadRange(10, 20, 50), {
+    start: 0,
+    readSize: 10,
+    truncated: false,
+  });
 });
