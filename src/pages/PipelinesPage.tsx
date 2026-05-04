@@ -387,12 +387,26 @@ export default function PipelinesPage() {
       {/* History modal */}
       <dialog ref={historyModalRef} className="modal">
         <div className="modal-box w-full max-w-lg">
-          <form method="dialog">
-            <button className="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
-          </form>
-          <h3 className="font-bold text-base mb-4">
-            {historyPipeline?.name} · 运行历史
-          </h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-base">
+              {historyPipeline?.name} · 运行历史
+            </h3>
+            <div className="flex items-center gap-1">
+              {historyPipeline && runs.some(r => r.pipelineId === historyPipeline.id) && (
+                <button
+                  className="btn btn-xs btn-ghost text-error/60 hover:text-error"
+                  onClick={async () => {
+                    if (!historyPipeline || !confirm('确认清空此流水线的全部运行记录和日志文件？')) return;
+                    await api.clearRuns(historyPipeline.id);
+                    setRuns(prev => prev.filter(r => r.pipelineId !== historyPipeline.id));
+                  }}
+                >清空全部</button>
+              )}
+              <form method="dialog">
+                <button className="btn btn-sm btn-circle btn-ghost">✕</button>
+              </form>
+            </div>
+          </div>
           {(() => {
             const pRuns = historyPipeline
               ? runs.filter(r => r.pipelineId === historyPipeline.id)

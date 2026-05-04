@@ -252,6 +252,22 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, runs.slice(-100).reverse());
   }
 
+  if (pathname === '/api/runs' && req.method === 'DELETE') {
+    const pipelineId = url.searchParams.get('pipeline');
+    if (!pipelineId || !PIPELINE_ID_RE.test(pipelineId)) return json(res, 400, { error: 'Invalid id' });
+    const all = readRuns();
+    const toDelete = all.filter(r => r.pipelineId === pipelineId);
+    const remaining = all.filter(r => r.pipelineId !== pipelineId);
+    const tmp = RUNS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(remaining, null, 2));
+    fs.renameSync(tmp, RUNS_FILE);
+    toDelete.forEach(r => {
+      try { fs.rmSync(path.join(LOGS_DIR, `${r.id}.log`)); } catch { /* noop */ }
+    });
+    res.writeHead(204); res.end();
+    return;
+  }
+
   const runLogMatch = pathname.match(/^\/api\/runs\/([a-f0-9]{16})\/log$/);
   if (runLogMatch && req.method === 'GET') {
     const runId = runLogMatch[1];

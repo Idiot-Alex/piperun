@@ -41,4 +41,7 @@ export const api = {
 
   deleteRun: (id: string) =>
     req<void>(`/runs/${id}`, { method: 'DELETE' }),
+
+  clearRuns: (pipelineId: string) =>
+    req<void>(`/runs?pipeline=${pipelineId}`, { method: 'DELETE' }),
 };
