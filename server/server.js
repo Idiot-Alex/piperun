@@ -337,8 +337,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   // /api/ping — publicly accessible; lets the frontend detect whether auth is required.
+  // authRequired is true only when the request comes from a remote client AND a token is set.
+  // This correctly reflects what the auth guard below will enforce.
   if (pathname === '/api/ping' && req.method === 'GET') {
-    return json(res, 200, { authRequired: !!API_TOKEN });
+    const authRequired = !isLocalRequest(req) && !!API_TOKEN;
+    return json(res, 200, { authRequired });
   }
 
   // Auth guard — non-localhost API requests require a valid Bearer token
@@ -691,7 +694,7 @@ wss.on('connection', (ws, req) => {
     child.on('close', code => {
       clearTimeout(runTimeout);
       logStream.end();
-      runningPipelineId = null;
+      if (runningPipelineId === pipelineId) runningPipelineId = null;
       const finishedAt = new Date().toISOString();
       const durationMs = runStartedAt ? Date.now() - new Date(runStartedAt).getTime() : 0;
       appendRun({

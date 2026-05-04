@@ -133,7 +133,7 @@ export default function RunPage() {
       else if (statuses.length > 0) setRunResult('success');
     }
     setRunning(r);
-  }, []);
+  }, [id, pipeline]);;
 
   const handleStepVars = useCallback((si: number, sj: number, vars: Record<string, string>) => {
     setVarsMap(prev => ({ ...prev, [`${si}:${sj}`]: vars }));

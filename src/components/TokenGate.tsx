@@ -15,12 +15,14 @@ export default function TokenGate({ children }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    let authIsRequired = false;
 
     async function init() {
       try {
         const r = await fetch('/api/ping');
         const data: { authRequired: boolean } = await r.json();
         if (cancelled) return;
+        authIsRequired = data.authRequired;
         if (!data.authRequired) {
           setState('open');
         } else if (getToken()) {
@@ -40,9 +42,13 @@ export default function TokenGate({ children }: Props) {
 
     const onLogout = () => {
       clearToken();
-      setState('gate');
-      setInput('');
-      setErrorMsg('');
+      // Only show the gate if auth is actually required.
+      // If no API_TOKEN is set, clearing a stale token should not block the user.
+      if (authIsRequired) {
+        setState('gate');
+        setInput('');
+        setErrorMsg('');
+      }
     };
     window.addEventListener('auth:logout', onLogout);
 

@@ -69,7 +69,7 @@ export const api = {
       window.dispatchEvent(new Event('auth:logout'));
       throw new Error('401 Unauthorized');
     }
-    if (!r.ok) throw new Error(`${r.status}`);
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
     return r.text();
   },
 
