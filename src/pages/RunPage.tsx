@@ -62,7 +62,10 @@ export default function RunPage() {
   const statusMapRef = useRef<StatusMap>({});
 
   useEffect(() => {
-    if (id) api.getPipeline(id).then(async p => {
+    if (!id) return;
+    let cancelled = false;
+    api.getPipeline(id).then(async p => {
+      if (cancelled) return;
       setPipeline(p);
       // Cache key includes updatedAt so edits to the pipeline invalidate the old replay.
       const cacheKey = `${id}:${p.updatedAt ?? ''}`;
@@ -75,8 +78,10 @@ export default function RunPage() {
       // 2. Fallback: fetch latest run log from server (persists across refresh/restart)
       try {
         const runs = await api.getRuns(id);
+        if (cancelled) return;
         if (runs.length > 0) {
           const log = await api.getRunLog(runs[0].id);
+          if (cancelled) return;
           if (log) {
             cacheSet(cacheKey, log);
             setPendingReplay(log);
@@ -84,6 +89,7 @@ export default function RunPage() {
         }
       } catch { /* no log available, terminal stays empty */ }
     }).catch(console.error);
+    return () => { cancelled = true; };
   }, [id]);
 
   // Replay log after XTerm mounts (pipeline state change causes XTerm to mount,

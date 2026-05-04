@@ -41,14 +41,19 @@ export default function EditorPage() {
   );
 
   useEffect(() => {
+    let cancelled = false;
     if (!isNew && id) {
       api.getPipeline(id).then(p => {
+        if (cancelled) return;
         setPipeline(p);
         dirtyCountRef.current = 0;
-      }).catch(e => setLoadError(e instanceof Error ? e.message : '加载失败'));
+      }).catch(e => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : '加载失败');
+      });
     } else {
       dirtyCountRef.current = 0;
     }
+    return () => { cancelled = true; };
   }, [id, isNew]);
 
   // Cmd+S / Ctrl+S shortcut — must be before any early return

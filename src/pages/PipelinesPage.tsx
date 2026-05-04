@@ -97,7 +97,26 @@ export default function PipelinesPage() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    const doLoad = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [plist, rlist] = await Promise.all([api.getPipelines(), api.getRuns()]);
+        if (!cancelled) {
+          setPipelines(plist);
+          setRuns(rlist);
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void doLoad();
+    return () => { cancelled = true; };
+  }, []);
 
   // Clear debounce timer on unmount to prevent state updates on unmounted component
   useEffect(() => {
