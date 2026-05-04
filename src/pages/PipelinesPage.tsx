@@ -42,6 +42,8 @@ export default function PipelinesPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [inputValue, setInputValue] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copying, setCopying] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -198,8 +200,12 @@ export default function PipelinesPage() {
               type="text"
               className="input input-sm input-bordered w-44 pl-8"
               placeholder="搜索..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              value={inputValue}
+              onChange={e => {
+                setInputValue(e.target.value);
+                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                searchDebounceRef.current = setTimeout(() => setSearch(e.target.value), 200);
+              }}
             />
             <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-base-content/30 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />

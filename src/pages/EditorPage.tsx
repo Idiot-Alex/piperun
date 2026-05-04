@@ -29,13 +29,11 @@ export default function EditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sandboxCmd, setSandboxCmd] = useState<string | null>(null);
   const savedRef = useRef(false);
-  const initialSnapshotRef = useRef<string>('');
+  // Track mutations via a counter instead of JSON.stringify on every render
+  const dirtyCountRef = useRef(0);
   const saveRef = useRef<() => Promise<void>>();
 
-  const isDirty = () =>
-    !savedRef.current &&
-    pipeline !== null &&
-    JSON.stringify(pipeline) !== initialSnapshotRef.current;
+  const isDirty = () => !savedRef.current && pipeline !== null && dirtyCountRef.current > 0;
 
   // Block navigation when there are unsaved changes
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
@@ -46,10 +44,10 @@ export default function EditorPage() {
     if (!isNew && id) {
       api.getPipeline(id).then(p => {
         setPipeline(p);
-        initialSnapshotRef.current = JSON.stringify(p);
+        dirtyCountRef.current = 0;
       }).catch(e => setLoadError(e instanceof Error ? e.message : '加载失败'));
     } else {
-      initialSnapshotRef.current = JSON.stringify(emptyPipeline());
+      dirtyCountRef.current = 0;
     }
   }, [id, isNew]);
 
@@ -87,7 +85,11 @@ export default function EditorPage() {
   const p = pipeline;
 
   const update = (updater: (prev: Pipeline) => Pipeline) =>
-    setPipeline(prev => (prev ? updater(prev) : prev));
+    setPipeline(prev => {
+      if (!prev) return prev;
+      dirtyCountRef.current += 1;
+      return updater(prev);
+    });
 
   // ── Stage operations ────────────────────────────────────────────────────────
   const addStage = () => {
@@ -205,6 +207,7 @@ export default function EditorPage() {
       if (isNew) await api.createPipeline(p);
       else await api.updatePipeline(p.id, p);
       savedRef.current = true;
+      dirtyCountRef.current = 0;
       navigate('/');
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));

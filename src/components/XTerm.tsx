@@ -33,6 +33,8 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const outputBufferRef = useRef<string>('');
+  // Max raw bytes kept in memory for replay (~10 MB)
+  const OUTPUT_BUFFER_LIMIT = 10 * 1024 * 1024;
 
   // Keep callbacks fresh without re-creating imperative handle
   const onStepStatusRef = useRef(onStepStatus);
@@ -116,7 +118,11 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
 
         // outputBufferRef stores the RAW (pre-strip) content so that replay()
         // can recover step statuses from the same data that the server log holds.
-        outputBufferRef.current += toProcess;
+        // Cap at OUTPUT_BUFFER_LIMIT: keep the most recent half when exceeded.
+        const next = outputBufferRef.current + toProcess;
+        outputBufferRef.current = next.length > OUTPUT_BUFFER_LIMIT
+          ? next.slice(-(OUTPUT_BUFFER_LIMIT / 2))
+          : next;
 
         const out = toProcess
           .replace(/\x01STEP_START:(\d+):(\d+)\x01\r?\n?/g, (_, si, sj) => {
