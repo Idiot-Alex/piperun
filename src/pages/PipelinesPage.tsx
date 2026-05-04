@@ -503,10 +503,14 @@ export default function PipelinesPage() {
                 {logContent
                   // eslint-disable-next-line no-control-regex
                   ? logContent
+                      // eslint-disable-next-line no-control-regex
                       .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
                       .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
                       .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
-                      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+                      // Strip all ANSI/VT escape sequences:
+                      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (title, hyperlinks)
+                      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')            // CSI (colors, cursor)
+                      .replace(/\x1b[^[\]]/g, '')                        // bare ESC (reverse index, etc.)
                       .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
                   : ''}
               </pre>

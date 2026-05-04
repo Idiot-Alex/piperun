@@ -243,10 +243,21 @@ function json(res, status, data) {
   res.end(body);
 }
 
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1 MB — prevents memory exhaustion from large payloads
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', c => chunks.push(c));
+    let size = 0;
+    req.on('data', c => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
       catch (e) { reject(e); }

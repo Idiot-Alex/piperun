@@ -4,8 +4,20 @@ import { api } from '../api';
 import type { Pipeline, StepStatus } from '../types';
 import XTerm, { type XTermHandle } from '../components/XTerm';
 
-// Module-level cache: persists across navigation within the same session
+// Module-level cache: persists across navigation within the same session.
+// Capped at 10 entries (FIFO) to bound memory usage (~10 MB × 10 = 100 MB worst case).
+const MAX_CACHE_ENTRIES = 10;
 const terminalOutputCache = new Map<string, string>();
+
+function cacheSet(key: string, value: string) {
+  // Re-insert to move key to end (most-recently-used position)
+  terminalOutputCache.delete(key);
+  terminalOutputCache.set(key, value);
+  if (terminalOutputCache.size > MAX_CACHE_ENTRIES) {
+    // Delete the oldest (first) entry
+    terminalOutputCache.delete(terminalOutputCache.keys().next().value!);
+  }
+}
 
 type StatusMap = Record<string, StepStatus>; // key: `${si}:${sj}`
 type DurationMap = Record<string, number>; // key: `${si}:${sj}`, value: ms
@@ -64,7 +76,7 @@ export default function RunPage() {
         if (runs.length > 0) {
           const log = await api.getRunLog(runs[0].id);
           if (log) {
-            terminalOutputCache.set(id, log);
+            cacheSet(id, log);
             setPendingReplay(log);
           }
         }
@@ -110,7 +122,7 @@ export default function RunPage() {
       // Save terminal output to cache when run finishes
       if (id) {
         const buf = xtermRef.current?.getBuffer();
-        if (buf) terminalOutputCache.set(id, buf);
+        if (buf) cacheSet(id, buf);
       }
       // Derive result from ref (always reflects the latest statusMap)
       const statuses = Object.values(statusMapRef.current);
