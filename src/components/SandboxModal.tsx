@@ -76,6 +76,10 @@ export default function SandboxModal({ command, onClose }: Props) {
       term.write(data);
     };
 
+    ws.onerror = () => {
+      term.write('\r\n\x1b[31m[连接失败，请检查 Token 是否正确或服务端是否在线]\x1b[0m\r\n');
+    };
+
     return () => {
       cancelAnimationFrame(rafId);
       ro.disconnect();

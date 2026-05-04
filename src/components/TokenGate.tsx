@@ -29,7 +29,10 @@ export default function TokenGate({ children }: Props) {
           setState('gate');
         }
       } catch {
-        if (!cancelled) setState('gate');
+        if (!cancelled) {
+          setErrorMsg('无法连接到服务器，请确认服务端已启动。');
+          setState('gate');
+        }
       }
     }
 
