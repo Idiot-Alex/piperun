@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n server,vite -c bgBlue.bold,bgGreen.bold \"node server/server.js\" \"vite\"",
-    "dev:server": "node server/server.js",
+    "dev": "concurrently -k -n server,vite -c bgBlue.bold,bgGreen.bold \"node --env-file-if-exists=.env server/server.js\" \"vite\"",
+    "dev:server": "node --env-file-if-exists=.env server/server.js",
     "dev:vite": "vite",
     "build": "vite build",
     "typecheck": "tsc -b",
-    "start": "node server/server.js",
+    "start": "node --env-file-if-exists=.env server/server.js",
     "preview": "vite preview"
   },
   "dependencies": {
