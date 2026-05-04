@@ -9,6 +9,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import type { StepStatus } from '../types';
+import { getToken } from '../api';
 
 export interface XTermHandle {
   start: (pipelineId: string) => void;
@@ -106,7 +107,9 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       onRunningChangeRef.current(true);
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${location.host}/pty?pipeline=${pipelineId}`);
+      const token = getToken();
+      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+      const ws = new WebSocket(`${proto}//${location.host}/pty?pipeline=${pipelineId}${tokenParam}`);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 

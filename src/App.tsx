@@ -2,6 +2,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import PipelinesPage from './pages/PipelinesPage';
 import EditorPage from './pages/EditorPage';
 import RunPage from './pages/RunPage';
+import TokenGate from './components/TokenGate';
 
 const router = createBrowserRouter([
   { path: '/', element: <PipelinesPage /> },
@@ -11,5 +12,9 @@ const router = createBrowserRouter([
 ]);
 
 export default function App() {
-  return <RouterProvider router={router} />;
+  return (
+    <TokenGate>
+      <RouterProvider router={router} />
+    </TokenGate>
+  );
 }

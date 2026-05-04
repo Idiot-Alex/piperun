@@ -25,6 +25,12 @@ const ALLOWED_ORIGINS = new Set(
 // "Authorization: Bearer <token>". Local (127.x / ::1) requests are always allowed.
 const API_TOKEN = process.env.API_TOKEN ?? null;
 
+// When running behind a reverse proxy (nginx, Caddy, etc.) the socket address is
+// always the proxy's loopback IP, so isLocalRequest() would incorrectly return true
+// for every request. Set TRUST_PROXY=true to disable the local auto-trust and require
+// API_TOKEN for ALL connections, including those arriving from 127.0.0.1.
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+
 const PIPELINE_ID_RE = /^[a-f0-9]{16}$/;
 const MIME = {
   '.html': 'text/html',
@@ -300,8 +306,10 @@ function serveStatic(res, filePath) {
 // ── HTTP server ──────────────────────────────────────────────────────────────
 let runningPipelineId = null;
 
-/** Returns true when the TCP connection originates from the loopback interface. */
+/** Returns true when the TCP connection originates from the loopback interface.
+ *  Always returns false when TRUST_PROXY=true (reverse proxy deployment). */
 function isLocalRequest(req) {
+  if (TRUST_PROXY) return false;
   const addr = req.socket.remoteAddress ?? '';
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
@@ -327,6 +335,11 @@ const server = http.createServer(async (req, res) => {
   }
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // /api/ping — publicly accessible; lets the frontend detect whether auth is required.
+  if (pathname === '/api/ping' && req.method === 'GET') {
+    return json(res, 200, { authRequired: !!API_TOKEN });
+  }
 
   // Auth guard — non-localhost API requests require a valid Bearer token
   if (pathname.startsWith('/api') && !isLocalRequest(req)) {

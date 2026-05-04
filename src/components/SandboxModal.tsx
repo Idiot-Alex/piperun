@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { getToken } from '../api';
 
 interface Props {
   command: string;
@@ -58,7 +59,9 @@ export default function SandboxModal({ command, onClose }: Props) {
     ro.observe(el);
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/sandbox`);
+    const token = getToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+    const ws = new WebSocket(`${proto}//${location.host}/sandbox${tokenParam}`);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
