@@ -71,6 +71,16 @@ function writePipelines(list) {
   fs.renameSync(tmp, PIPELINES_FILE);
 }
 
+// ── Write mutex ───────────────────────────────────────────────────────────────
+// Prevents concurrent read-modify-write races on the JSON files.
+// Node.js is single-threaded but async I/O can interleave awaited operations.
+let writeLock = Promise.resolve();
+
+function withLock(fn) {
+  writeLock = writeLock.then(fn).catch(() => {});
+  return writeLock;
+}
+
 function readRuns() {
   try {
     return JSON.parse(fs.readFileSync(RUNS_FILE, 'utf8'));
@@ -80,13 +90,15 @@ function readRuns() {
 }
 
 function appendRun(run) {
-  const runs = readRuns();
-  runs.push(run);
-  // Keep only the most recent 500 runs total
-  const trimmed = runs.slice(-500);
-  const tmp = RUNS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(trimmed, null, 2));
-  fs.renameSync(tmp, RUNS_FILE);
+  return withLock(() => {
+    const runs = readRuns();
+    runs.push(run);
+    // Keep only the most recent 500 runs total
+    const trimmed = runs.slice(-500);
+    const tmp = RUNS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(trimmed, null, 2));
+    fs.renameSync(tmp, RUNS_FILE);
+  });
 }
 
 function sanitizePipeline(p) {
@@ -122,6 +134,11 @@ function sqEscape(str) {
   return str.replace(/'/g, "'\\''")
 }
 
+function envExportLine(key, value) {
+  const escaped = sqEscape(value);
+  return `export ${key}='${escaped}'`;
+}
+
 // ── Pipeline executor ────────────────────────────────────────────────────────
 function buildBashScript(pipeline) {
   const { stages, env = [] } = pipeline;
@@ -140,7 +157,7 @@ function buildBashScript(pipeline) {
   if (env.length > 0) {
     lines.push('# ── Pipeline environment variables ──────────────────────────────');
     env.forEach(({ key, value }) => {
-      lines.push(`export ${key}=${sqEscape(value) ? `'${sqEscape(value)}'` : "''"}`);
+      lines.push(envExportLine(key, value));
     });
     lines.push('');
   }
@@ -329,6 +346,13 @@ const server = http.createServer(async (req, res) => {
 
   const runLogMatch = pathname.match(/^\/api\/runs\/([a-f0-9]{16})\/log$/);
   if (runLogMatch && req.method === 'GET') {
+    // Apply the same auth guard as all other API endpoints
+    if (!isLocalRequest(req)) {
+      if (!API_TOKEN) return json(res, 403, { error: 'Remote access is disabled. Set API_TOKEN to enable.' });
+      const authHeader = req.headers['authorization'] ?? '';
+      const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      if (!checkToken(provided)) return json(res, 401, { error: 'Unauthorized' });
+    }
     const runId = runLogMatch[1];
     const logPath = path.join(LOGS_DIR, `${runId}.log`);
     if (!fs.existsSync(logPath)) return json(res, 404, { error: 'Log not found' });
@@ -537,7 +561,21 @@ wss.on('connection', (ws, req) => {
   if (!pipeline) { ws.close(1008, 'Pipeline not found'); return; }
 
   const hasSteps = pipeline.stages?.some(s => s.steps?.length > 0);
-  if (!hasSteps) { ws.send('\r\n\x1b[33m[无步骤]\x1b[0m\r\n'); ws.close(); return; }
+  if (!hasSteps) {
+    ws.send('\r\n\x1b[33m[无步骤，请先在编辑器中添加步骤]\x1b[0m\r\n');
+    ws.close();
+    // Record the attempt so it appears in history
+    appendRun({
+      id: uid(),
+      pipelineId,
+      pipelineName: pipeline.name,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      durationMs: 0,
+      result: 'failed',
+    });
+    return;
+  }
 
   if (runningPipelineId) {
     ws.send('\r\n\x1b[31m[另一条流水线正在运行，请稍后再试]\x1b[0m\r\n');

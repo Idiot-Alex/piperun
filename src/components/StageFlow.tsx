@@ -200,7 +200,11 @@ export default function StageFlow({
                         )}
                         <button
                           className="btn btn-ghost btn-xs px-1 h-5 min-h-5 text-error hover:bg-error/10 text-xs"
-                          onClick={e => { e.stopPropagation(); onDeleteStep(si, sj); }}
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (!confirm(`删除步骤「${step.name || '未命名步骤'}」？`)) return;
+                            onDeleteStep(si, sj);
+                          }}
                         >✕</button>
                       </div>
                     </div>

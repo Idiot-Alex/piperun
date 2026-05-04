@@ -235,7 +235,7 @@ export default function EditorPage() {
                 placeholder="例如：后端部署流程"
                 value={p.name}
                 onChange={e => {
-                  setPipeline(prev => prev ? { ...prev, name: e.target.value } : prev);
+                  update(prev => ({ ...prev, name: e.target.value }));
                   setNameError(false);
                 }}
                 autoFocus
@@ -251,7 +251,7 @@ export default function EditorPage() {
                 placeholder="简要描述该流水线的用途..."
                 rows={3}
                 value={p.description}
-                onChange={e => setPipeline(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                onChange={e => update(prev => ({ ...prev, description: e.target.value }))}
               />
             </div>
             {p.stages.length === 0 && (

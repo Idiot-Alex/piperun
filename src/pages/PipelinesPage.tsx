@@ -99,6 +99,11 @@ export default function PipelinesPage() {
 
   useEffect(() => { void load(); }, []);
 
+  // Clear debounce timer on unmount to prevent state updates on unmounted component
+  useEffect(() => {
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, []);
+
   const handleDelete = async (id: string) => {
     if (!confirm('确认删除此流水线？')) return;
     setDeleteError(null);
