@@ -355,12 +355,15 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/runs' && req.method === 'DELETE') {
     const pipelineId = url.searchParams.get('pipeline');
     if (!pipelineId || !PIPELINE_ID_RE.test(pipelineId)) return json(res, 400, { error: 'Invalid id' });
-    const all = readRuns();
-    const toDelete = all.filter(r => r.pipelineId === pipelineId);
-    const remaining = all.filter(r => r.pipelineId !== pipelineId);
-    const tmp = RUNS_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(remaining, null, 2));
-    fs.renameSync(tmp, RUNS_FILE);
+    let toDelete = [];
+    await withLock(() => {
+      const all = readRuns();
+      toDelete = all.filter(r => r.pipelineId === pipelineId);
+      const remaining = all.filter(r => r.pipelineId !== pipelineId);
+      const tmp = RUNS_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(remaining, null, 2));
+      fs.renameSync(tmp, RUNS_FILE);
+    });
     toDelete.forEach(r => {
       try { fs.rmSync(path.join(LOGS_DIR, `${r.id}.log`)); } catch { /* noop */ }
     });
@@ -391,13 +394,18 @@ const server = http.createServer(async (req, res) => {
   const runDeleteMatch = pathname.match(/^\/api\/runs\/([a-f0-9]{16})$/);
   if (runDeleteMatch && req.method === 'DELETE') {
     const runId = runDeleteMatch[1];
-    const runs = readRuns();
-    const idx = runs.findIndex(r => r.id === runId);
-    if (idx === -1) return json(res, 404, { error: 'Not found' });
-    runs.splice(idx, 1);
-    const tmp = RUNS_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(runs, null, 2));
-    fs.renameSync(tmp, RUNS_FILE);
+    let found = false;
+    await withLock(() => {
+      const runs = readRuns();
+      const idx = runs.findIndex(r => r.id === runId);
+      if (idx === -1) return;
+      runs.splice(idx, 1);
+      const tmp = RUNS_FILE + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(runs, null, 2));
+      fs.renameSync(tmp, RUNS_FILE);
+      found = true;
+    });
+    if (!found) return json(res, 404, { error: 'Not found' });
     const logPath = path.join(LOGS_DIR, `${runId}.log`);
     try { fs.rmSync(logPath); } catch { /* file may not exist */ }
     res.writeHead(204); res.end();
@@ -529,9 +537,8 @@ function handleSandbox(ws) {
     child = spawn('bash', ['-c', cmd], {
       env: safeEnv,
       cwd: sandboxDir,
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    // Keep stdin open — subsequent WS messages will be piped in
 
     const send = (d) => { if (ws.readyState === 1) ws.send(d.toString()); };
     child.stdout.on('data', send);
