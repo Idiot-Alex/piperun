@@ -38,4 +38,7 @@ export const api = {
     if (!r.ok) throw new Error(`${r.status}`);
     return r.text();
   },
+
+  deleteRun: (id: string) =>
+    req<void>(`/runs/${id}`, { method: 'DELETE' }),
 };

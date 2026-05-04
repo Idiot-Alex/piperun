@@ -265,6 +265,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const runDeleteMatch = pathname.match(/^\/api\/runs\/([a-f0-9]{16})$/);
+  if (runDeleteMatch && req.method === 'DELETE') {
+    const runId = runDeleteMatch[1];
+    const runs = readRuns();
+    const idx = runs.findIndex(r => r.id === runId);
+    if (idx === -1) return json(res, 404, { error: 'Not found' });
+    runs.splice(idx, 1);
+    const tmp = RUNS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(runs, null, 2));
+    fs.renameSync(tmp, RUNS_FILE);
+    const logPath = path.join(LOGS_DIR, `${runId}.log`);
+    try { fs.rmSync(logPath); } catch { /* file may not exist */ }
+    res.writeHead(204); res.end();
+    return;
+  }
+
   if (pathname === '/api/pipelines' && req.method === 'GET') {
     const list = readPipelines();
     list.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));

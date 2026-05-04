@@ -33,6 +33,10 @@ export default function PipelinesPage() {
   const [runs, setRuns] = useState<PipelineRun[]>([]);
   const [historyPipeline, setHistoryPipeline] = useState<Pipeline | null>(null);
   const historyModalRef = useRef<HTMLDialogElement>(null);
+  const logModalRef = useRef<HTMLDialogElement>(null);
+  const [logRun, setLogRun] = useState<PipelineRun | null>(null);
+  const [logContent, setLogContent] = useState<string | null>(null);
+  const [logLoading, setLogLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -40,6 +44,21 @@ export default function PipelinesPage() {
   const [copying, setCopying] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  const openLog = async (r: PipelineRun) => {
+    setLogRun(r);
+    setLogContent(null);
+    setLogLoading(true);
+    logModalRef.current?.showModal();
+    try {
+      const text = await api.getRunLog(r.id);
+      setLogContent(text);
+    } catch {
+      setLogContent('（日志不存在或已被清除）');
+    } finally {
+      setLogLoading(false);
+    }
+  };
 
   // Build a map: pipelineId → most recent run (runs are returned newest-first)
   const lastRunMap = runs.reduce<Record<string, PipelineRun>>((acc, r) => {
@@ -388,6 +407,8 @@ export default function PipelinesPage() {
                     <div className="flex items-center gap-2.5">
                       {r.result === 'success'
                         ? <span className="text-success font-bold text-base">✓</span>
+                        : r.result === 'timeout'
+                        ? <span className="text-warning font-bold text-base">⏱</span>
                         : <span className="text-error font-bold text-base">✗</span>
                       }
                       <div>
@@ -402,12 +423,63 @@ export default function PipelinesPage() {
                       <span className={`badge badge-xs ${r.result === 'success' ? 'badge-success' : r.result === 'timeout' ? 'badge-warning' : 'badge-error'}`}>
                         {r.result === 'success' ? '成功' : r.result === 'timeout' ? '超时' : '失败'}
                       </span>
+                      <button
+                        className="btn btn-xs btn-ghost text-base-content/50"
+                        onClick={() => openLog(r)}
+                      >日志</button>
+                      <button
+                        className="btn btn-xs btn-ghost text-error/60 hover:text-error"
+                        onClick={async () => {
+                          if (!confirm('确认删除此条运行记录和日志文件？')) return;
+                          await api.deleteRun(r.id);
+                          setRuns(prev => prev.filter(x => x.id !== r.id));
+                        }}
+                      >删除</button>
                     </div>
                   </div>
                 ))}
               </div>
             );
           })()}
+        </div>
+        <form method="dialog" className="modal-backdrop"><button>close</button></form>
+      </dialog>
+
+      {/* Log viewer modal */}
+      <dialog ref={logModalRef} className="modal">
+        <div className="modal-box w-11/12 max-w-4xl h-[80vh] flex flex-col p-0">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-base-300 flex-shrink-0">
+            <div>
+              <span className="font-bold text-sm">
+                {logRun && new Date(logRun.startedAt).toLocaleString('zh-CN')}
+              </span>
+              {logRun && (
+                <span className={`ml-2 badge badge-xs ${
+                  logRun.result === 'success' ? 'badge-success' :
+                  logRun.result === 'timeout' ? 'badge-warning' : 'badge-error'
+                }`}>
+                  {logRun.result === 'success' ? '成功' : logRun.result === 'timeout' ? '超时' : '失败'}
+                </span>
+              )}
+            </div>
+            <form method="dialog">
+              <button className="btn btn-sm btn-circle btn-ghost">✕</button>
+            </form>
+          </div>
+          <div className="flex-1 overflow-y-auto bg-[#1e1e1e] p-4">
+            {logLoading ? (
+              <div className="flex justify-center items-center h-full">
+                <span className="loading loading-spinner text-neutral-content"></span>
+              </div>
+            ) : (
+              <pre className="text-xs font-mono text-[#d4d4d4] whitespace-pre-wrap break-all leading-5">
+                {logContent
+                  // eslint-disable-next-line no-control-regex
+                  ? logContent.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+                  : ''}
+              </pre>
+            )}
+          </div>
         </div>
         <form method="dialog" className="modal-backdrop"><button>close</button></form>
       </dialog>
