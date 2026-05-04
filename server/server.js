@@ -252,8 +252,13 @@ function readBody(req) {
     req.on('data', c => {
       size += c.length;
       if (size > MAX_BODY_BYTES) {
-        req.destroy();
-        reject(new Error('Request body too large'));
+        // Drain the socket so the connection stays usable, then reject.
+        // Calling req.destroy() would also destroy res (shared socket) and
+        // prevent the caller from sending a 413 response.
+        req.resume();
+        const err = new Error('Request body too large');
+        err.code = 'PAYLOAD_TOO_LARGE';
+        reject(err);
         return;
       }
       chunks.push(c);
@@ -398,39 +403,61 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname === '/api/pipelines' && req.method === 'POST') {
-    try {
-      const body = await readBody(req);
-      const p = sanitizePipeline({ ...body, id: uid() });
+    let body;
+    try { body = await readBody(req); }
+    catch (e) {
+      if (e.code === 'PAYLOAD_TOO_LARGE') return json(res, 413, { error: 'Request body too large' });
+      return json(res, 400, { error: 'Invalid JSON' });
+    }
+    const p = sanitizePipeline({ ...body, id: uid() });
+    await withLock(() => {
       const list = readPipelines();
       list.push(p);
       writePipelines(list);
-      return json(res, 201, p);
-    } catch { return json(res, 400, { error: 'Invalid JSON' }); }
+    });
+    return json(res, 201, p);
   }
 
   const pipelineMatch = pathname.match(/^\/api\/pipelines\/([a-f0-9]{16})$/);
   if (pipelineMatch) {
     const id = pipelineMatch[1];
-    const list = readPipelines();
-    const idx = list.findIndex(p => p.id === id);
 
     if (req.method === 'GET') {
-      if (idx === -1) return json(res, 404, { error: 'Not found' });
-      return json(res, 200, list[idx]);
+      const list = readPipelines();
+      const p = list.find(p => p.id === id);
+      if (!p) return json(res, 404, { error: 'Not found' });
+      return json(res, 200, p);
     }
     if (req.method === 'PUT') {
-      if (idx === -1) return json(res, 404, { error: 'Not found' });
-      try {
-        const body = await readBody(req);
+      let body;
+      try { body = await readBody(req); }
+      catch (e) {
+        if (e.code === 'PAYLOAD_TOO_LARGE') return json(res, 413, { error: 'Request body too large' });
+        return json(res, 400, { error: 'Invalid JSON' });
+      }
+      let updated;
+      await withLock(() => {
+        const list = readPipelines();
+        const idx = list.findIndex(p => p.id === id);
+        if (idx === -1) { updated = null; return; }
         list[idx] = sanitizePipeline({ ...body, id, createdAt: list[idx].createdAt });
+        updated = list[idx];
         writePipelines(list);
-        return json(res, 200, list[idx]);
-      } catch { return json(res, 400, { error: 'Invalid JSON' }); }
+      });
+      if (!updated) return json(res, 404, { error: 'Not found' });
+      return json(res, 200, updated);
     }
     if (req.method === 'DELETE') {
-      if (idx === -1) return json(res, 404, { error: 'Not found' });
-      list.splice(idx, 1);
-      writePipelines(list);
+      let found = false;
+      await withLock(() => {
+        const list = readPipelines();
+        const idx = list.findIndex(p => p.id === id);
+        if (idx === -1) return;
+        list.splice(idx, 1);
+        writePipelines(list);
+        found = true;
+      });
+      if (!found) return json(res, 404, { error: 'Not found' });
       res.writeHead(204); res.end();
       return;
     }
