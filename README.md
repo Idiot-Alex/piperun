@@ -51,9 +51,11 @@ pnpm dev
 |---|---|---|
 | `PORT` | `3001` | 监听端口 |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,...` | 允许的 WebSocket / CORS Origin，逗号分隔 |
-| `API_TOKEN` | 未设置 | 设置后，非 localhost 的 API 请求必须携带 `Authorization: Bearer <token>`；WebSocket 连接需附 `?token=<token>` |
+| `API_TOKEN` | 未设置 | 设置后，非 localhost 的 HTTP API 请求必须携带 `Authorization: Bearer <token>`；WebSocket 连接后由前端发送鉴权消息 |
+| `TRUST_PROXY` | `false` | 反向代理部署时设为 `true`，关闭 localhost 自动信任，强制所有请求使用 `API_TOKEN` |
 
 > 本地开发时无需配置任何环境变量，localhost 请求始终放行。
+> 生产环境建议同时设置 `API_TOKEN`、`ALLOWED_ORIGINS`，反向代理部署时再设置 `TRUST_PROXY=true`。
 
 ## 目录结构
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
-import type { Pipeline, StepStatus } from '../types';
+import type { Pipeline, RunResult, StepStatus } from '../types';
 import XTerm, { type XTermHandle } from '../components/XTerm';
 
 // Module-level cache: persists across navigation within the same session.
@@ -16,6 +16,12 @@ function cacheSet(key: string, value: string) {
   if (terminalOutputCache.size > MAX_CACHE_ENTRIES) {
     // Delete the oldest (first) entry
     terminalOutputCache.delete(terminalOutputCache.keys().next().value!);
+  }
+}
+
+function clearPipelineCache(pipelineId: string) {
+  for (const key of terminalOutputCache.keys()) {
+    if (key.startsWith(`${pipelineId}:`)) terminalOutputCache.delete(key);
   }
 }
 
@@ -52,12 +58,14 @@ export default function RunPage() {
   const [varsMap, setVarsMap] = useState<VarsMap>({});
   const [running, setRunning] = useState(false);
   const [totalDuration, setTotalDuration] = useState<number | null>(null);
-  const [runResult, setRunResult] = useState<'success' | 'failed' | null>(null);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
   // Log data waiting to be replayed once XTerm mounts (after pipeline state is set)
   const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const xtermRef = useRef<XTermHandle>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const runStartRef = useRef<number>(0);
+  const runningRef = useRef(false);
+  const runResultRef = useRef<RunResult | null>(null);
   // Mirror of statusMap kept in sync for use in callbacks without stale closures
   const statusMapRef = useRef<StatusMap>({});
 
@@ -67,23 +75,27 @@ export default function RunPage() {
     api.getPipeline(id).then(async p => {
       if (cancelled) return;
       setPipeline(p);
-      // Cache key includes updatedAt so edits to the pipeline invalidate the old replay.
-      const cacheKey = `${id}:${p.updatedAt ?? ''}`;
-      // 1. Try in-memory cache first (fast path, same session)
-      const cached = terminalOutputCache.get(cacheKey);
-      if (cached) {
-        setPendingReplay(cached);
-        return;
-      }
-      // 2. Fallback: fetch latest run log from server (persists across refresh/restart)
       try {
         const runs = await api.getRuns(id);
         if (cancelled) return;
         if (runs.length > 0) {
+          if (!runningRef.current) {
+            runResultRef.current = runs[0].result;
+            setRunResult(runs[0].result);
+            setTotalDuration(runs[0].durationMs);
+          }
+          const cacheKey = `${id}:${runs[0].id}`;
+          const cached = terminalOutputCache.get(cacheKey);
+          if (cached) {
+            if (runningRef.current) return;
+            setPendingReplay(cached);
+            return;
+          }
           const log = await api.getRunLog(runs[0].id);
           if (cancelled) return;
           if (log) {
             cacheSet(cacheKey, log);
+            if (runningRef.current) return;
             setPendingReplay(log);
           }
         }
@@ -97,6 +109,10 @@ export default function RunPage() {
   useEffect(() => {
     if (pendingReplay === null) return;
     if (!xtermRef.current) return;
+    if (runningRef.current) {
+      setPendingReplay(null);
+      return;
+    }
     xtermRef.current.replay(pendingReplay);
     setPendingReplay(null);
   }, [pendingReplay, pipeline]);
@@ -120,26 +136,35 @@ export default function RunPage() {
   }, []);
 
   const handleRunningChange = useCallback((r: boolean) => {
+    runningRef.current = r;
     if (r) {
       runStartRef.current = Date.now();
+      runResultRef.current = null;
+      setPendingReplay(null);
       setTotalDuration(null);
       setRunResult(null);
     } else {
       const dur = Date.now() - runStartRef.current;
       setTotalDuration(dur);
-      // Save terminal output to cache when run finishes
+      // The server appends a new run before closing the websocket; clear older
+      // cached logs so the next visit fetches that newest run by id.
       if (id) {
-        const buf = xtermRef.current?.getBuffer();
-        const cacheKey = `${id}:${pipeline?.updatedAt ?? ''}`;
-        if (buf) cacheSet(cacheKey, buf);
+        clearPipelineCache(id);
       }
       // Derive result from ref (always reflects the latest statusMap)
       const statuses = Object.values(statusMapRef.current);
-      if (statuses.length > 0 && statuses.some(s => s === 'failed')) setRunResult('failed');
-      else if (statuses.length > 0) setRunResult('success');
+      if (!runResultRef.current) {
+        if (statuses.length > 0 && statuses.some(s => s === 'failed' || s === 'running')) setRunResult('failed');
+        else if (statuses.length > 0) setRunResult('success');
+      }
     }
     setRunning(r);
-  }, [id, pipeline]);;
+  }, [id]);;
+
+  const handleRunResult = useCallback((result: RunResult) => {
+    runResultRef.current = result;
+    setRunResult(result);
+  }, []);
 
   const handleStepVars = useCallback((si: number, sj: number, vars: Record<string, string>) => {
     setVarsMap(prev => ({ ...prev, [`${si}:${sj}`]: vars }));
@@ -204,6 +229,12 @@ export default function RunPage() {
               )}
               {!running && runResult === 'failed' && (
                 <span className="badge badge-error badge-sm gap-1 flex-shrink-0">✗ 失败</span>
+              )}
+              {!running && runResult === 'timeout' && (
+                <span className="badge badge-warning badge-sm gap-1 flex-shrink-0">⏱ 超时</span>
+              )}
+              {!running && runResult === 'stopped' && (
+                <span className="badge badge-neutral badge-sm gap-1 flex-shrink-0">■ 已停止</span>
               )}
             </div>
             {pipeline.description && (
@@ -369,6 +400,7 @@ export default function RunPage() {
             ref={xtermRef}
             onStepStatus={handleStepStatus}
             onRunningChange={handleRunningChange}
+            onRunResult={handleRunResult}
             onStepVars={handleStepVars}
           />
         </div>

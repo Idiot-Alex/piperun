@@ -8,6 +8,7 @@
     "dev:vite": "vite",
     "build": "vite build",
     "typecheck": "tsc -b",
+    "test": "node --test",
     "start": "node --env-file-if-exists=.env server/server.js",
     "preview": "vite preview"
   },

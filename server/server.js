@@ -31,6 +31,13 @@ const API_TOKEN = process.env.API_TOKEN ?? null;
 // API_TOKEN for ALL connections, including those arriving from 127.0.0.1.
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 
+if (API_TOKEN && API_TOKEN.length < 32) {
+  console.warn('[security] API_TOKEN is shorter than 32 characters; use a long random token for remote access.');
+}
+if (TRUST_PROXY && !API_TOKEN) {
+  console.warn('[security] TRUST_PROXY=true without API_TOKEN will reject all non-public API and WebSocket requests.');
+}
+
 const PIPELINE_ID_RE = /^[a-f0-9]{16}$/;
 const MIME = {
   '.html': 'text/html',
@@ -109,6 +116,28 @@ function appendRun(run) {
     fs.writeFileSync(tmp, JSON.stringify(trimmed, null, 2));
     fs.renameSync(tmp, RUNS_FILE);
   });
+}
+
+async function appendRunSafely(run) {
+  try {
+    await appendRun(run);
+  } catch (e) {
+    console.error('append run failed:', e.message);
+  }
+}
+
+function killChildProcessGroup(child, signal = 'SIGTERM') {
+  if (!child?.pid) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try { child.kill(signal); } catch { /* noop */ }
+  }
+}
+
+function terminateChildProcessGroup(child) {
+  killChildProcessGroup(child, 'SIGTERM');
+  return setTimeout(() => killChildProcessGroup(child, 'SIGKILL'), 3000);
 }
 
 function sanitizePipeline(p) {
@@ -323,6 +352,33 @@ function checkToken(provided) {
   return timingSafeEqual(a, b);
 }
 
+function wsAuthRequired(req) {
+  return !isLocalRequest(req) && !!API_TOKEN;
+}
+
+function waitForWsAuth(ws, req, onAuthed) {
+  if (!wsAuthRequired(req)) {
+    onAuthed();
+    return;
+  }
+
+  const timer = setTimeout(() => ws.close(1008, 'Auth timeout'), 10_000);
+  ws.once('message', data => {
+    clearTimeout(timer);
+    try {
+      const parsed = JSON.parse(data.toString());
+      const token = String(parsed.token ?? '');
+      if (parsed.type !== 'auth' || !checkToken(token)) {
+        ws.close(1008, 'Unauthorized');
+        return;
+      }
+      onAuthed();
+    } catch {
+      ws.close(1008, 'Invalid auth message');
+    }
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
   const { pathname } = url;
@@ -336,12 +392,14 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // /api/ping — publicly accessible; lets the frontend detect whether auth is required.
-  // authRequired is true only when the request comes from a remote client AND a token is set.
-  // This correctly reflects what the auth guard below will enforce.
+  // /api/ping — publicly accessible; lets the frontend detect whether auth is required
+  // or remote access is disabled by configuration.
   if (pathname === '/api/ping' && req.method === 'GET') {
-    const authRequired = !isLocalRequest(req) && !!API_TOKEN;
-    return json(res, 200, { authRequired });
+    const remote = !isLocalRequest(req);
+    return json(res, 200, {
+      authRequired: remote && !!API_TOKEN,
+      remoteDisabled: remote && !API_TOKEN,
+    });
   }
 
   // Auth guard — non-localhost API requests require a valid Bearer token
@@ -509,12 +567,14 @@ const server = http.createServer(async (req, res) => {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
 
-function handleSandbox(ws) {
+function handleSandbox(ws, req) {
   let child = null;
+  let childExited = false;
   let timer = null;
+  let killTimer = null;
   let cleanup = null;
 
-  ws.once('message', (data) => {
+  const waitForCommand = () => ws.once('message', (data) => {
     let cmd, cols = 120, rows = 30;
     try {
       const parsed = JSON.parse(data.toString());
@@ -554,6 +614,7 @@ function handleSandbox(ws) {
     child = spawn('bash', ['-c', cmd], {
       env: safeEnv,
       cwd: sandboxDir,
+      detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -562,13 +623,15 @@ function handleSandbox(ws) {
     child.stderr.on('data', send);
 
     timer = setTimeout(() => {
-      try { child?.kill('SIGTERM'); } catch { /* noop */ }
+      if (!childExited) killTimer = terminateChildProcessGroup(child);
       if (ws.readyState === 1) ws.send('\r\n\x1b[33m[超时：已强制终止 (60s)]\x1b[0m\r\n');
       ws.close();
     }, 60_000);
 
     child.on('close', code => {
+      childExited = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
       cleanup();
       const msg = code === 0
         ? '\r\n\x1b[32m✓ 完成 (退出码 0)\x1b[0m\r\n'
@@ -578,9 +641,11 @@ function handleSandbox(ws) {
     });
   });
 
+  waitForWsAuth(ws, req, waitForCommand);
+
   ws.on('close', () => {
     clearTimeout(timer);
-    try { child?.kill('SIGTERM'); } catch { /* noop */ }
+    if (!childExited && !killTimer) killTimer = terminateChildProcessGroup(child);
     cleanup?.();
   });
 }
@@ -601,23 +666,17 @@ server.on('upgrade', (req, socket, head) => {
       socket.destroy();
       return;
     }
-    const provided = wsUrl.searchParams.get('token') ?? '';
-    if (!checkToken(provided)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
-      socket.destroy();
-      return;
-    }
   }
   if (wsUrl.pathname === '/pty') {
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   } else if (wsUrl.pathname === '/sandbox') {
-    wss.handleUpgrade(req, socket, head, ws => handleSandbox(ws));
+    wss.handleUpgrade(req, socket, head, ws => handleSandbox(ws, req));
   } else {
     socket.destroy();
   }
 });
 
-wss.on('connection', (ws, req) => {
+async function handlePty(ws, req) {
   const url = new URL(req.url, 'http://localhost');
   const pipelineId = url.searchParams.get('pipeline') ?? '';
 
@@ -635,7 +694,7 @@ wss.on('connection', (ws, req) => {
     ws.send('\r\n\x1b[33m[无步骤，请先在编辑器中添加步骤]\x1b[0m\r\n');
     ws.close();
     // Record the attempt so it appears in history
-    appendRun({
+    await appendRunSafely({
       id: uid(),
       pipelineId,
       pipelineName: pipeline.name,
@@ -660,12 +719,28 @@ wss.on('connection', (ws, req) => {
   const runId = uid();
   const logPath = path.join(LOGS_DIR, `${runId}.log`);
   const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+  let logEnded = false;
+
+  const writeLog = (str) => {
+    if (logEnded || logStream.destroyed || !logStream.writable) return;
+    logStream.write(str);
+  };
+
+  const endLog = () => new Promise(resolve => {
+    if (logEnded) { resolve(); return; }
+    logEnded = true;
+    if (logStream.closed || logStream.destroyed) { resolve(); return; }
+    logStream.end(resolve);
+  });
 
   // Wait for the initial RESIZE message so we know the terminal dimensions
   // before spawning bash. If no RESIZE arrives within 300ms, use defaults.
   let child = null;
+  let childExited = false;
+  let killTimer = null;
   let runStartedAt = null;
   let isTimeout = false;
+  let clientClosed = false;
   const DEFAULT_COLS = 220;
   const DEFAULT_ROWS = 50;
 
@@ -680,34 +755,39 @@ wss.on('connection', (ws, req) => {
         COLUMNS: String(cols),
         LINES: String(rows),
       },
+      detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     const send = (data) => {
       const str = data.toString();
       if (ws.readyState === 1) ws.send(str);
-      // Guard against write-after-end: logStream is closed by ws.on('close') when
-      // the user stops the run before the child exits naturally.
-      if (!logStream.closed) logStream.write(str);
+      writeLog(str);
     };
 
     child.stdout.on('data', send);
     child.stderr.on('data', send);
 
-    child.on('close', code => {
+    child.on('close', async code => {
+      childExited = true;
       clearTimeout(runTimeout);
-      logStream.end();
+      clearTimeout(killTimer);
       if (runningPipelineId === pipelineId) runningPipelineId = null;
       const finishedAt = new Date().toISOString();
       const durationMs = runStartedAt ? Date.now() - new Date(runStartedAt).getTime() : 0;
-      appendRun({
+      const result = clientClosed ? 'stopped' : (isTimeout ? 'timeout' : (code === 0 ? 'success' : 'failed'));
+      const marker = `\x01RUN_END:${result}\x01\n`;
+      writeLog(marker);
+      if (ws.readyState === 1) ws.send(marker);
+      await endLog();
+      await appendRunSafely({
         id: runId,
         pipelineId,
         pipelineName: pipeline.name,
         startedAt: runStartedAt,
         finishedAt,
         durationMs,
-        result: isTimeout ? 'timeout' : (code === 0 ? 'success' : 'failed'),
+        result,
       });
       const msg = code === 0
         ? '\r\n\x1b[32m✓ 执行完成\x1b[0m\r\n'
@@ -725,7 +805,7 @@ wss.on('connection', (ws, req) => {
   const MAX_RUNTIME_MS = 30 * 60 * 1000; // 30 minutes
   const runTimeout = setTimeout(() => {
     isTimeout = true;
-    try { child?.kill('SIGTERM'); } catch { /* noop */ }
+    if (!childExited && !killTimer) killTimer = terminateChildProcessGroup(child);
     if (ws.readyState === 1) {
       ws.send('\r\n\x1b[33m[超时：已强制终止 (30min)]\x1b[0m\r\n');
     }
@@ -747,12 +827,29 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     clearTimeout(runTimeout);
     clearTimeout(startTimer);
+    if (child && !childExited) {
+      clientClosed = true;
+      if (!killTimer) killTimer = terminateChildProcessGroup(child);
+      return;
+    }
     if (runningPipelineId === pipelineId) runningPipelineId = null;
-    logStream.end();
-    try { child?.kill('SIGTERM'); } catch { /* noop */ }
+    void endLog();
   });
+}
+
+wss.on('connection', (ws, req) => {
+  waitForWsAuth(ws, req, () => void handlePty(ws, req));
 });
 
-server.listen(PORT, () => {
-  console.log(`server listening on http://localhost:${PORT}`);
-});
+export {
+  buildBashScript,
+  sanitizePipeline,
+  envExportLine,
+  sqEscape,
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  server.listen(PORT, () => {
+    console.log(`server listening on http://localhost:${PORT}`);
+  });
+}

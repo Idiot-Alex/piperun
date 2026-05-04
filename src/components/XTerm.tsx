@@ -8,7 +8,7 @@ import {
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import type { StepStatus } from '../types';
+import type { RunResult, StepStatus } from '../types';
 import { getToken } from '../api';
 
 export interface XTermHandle {
@@ -22,17 +22,19 @@ export interface XTermHandle {
 interface Props {
   onStepStatus: (si: number, sj: number, status: StepStatus, durationMs?: number) => void;
   onRunningChange: (running: boolean) => void;
+  onRunResult?: (result: RunResult) => void;
   onStepVars?: (si: number, sj: number, vars: Record<string, string>) => void;
 }
 
 const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
-  { onStepStatus, onRunningChange, onStepVars },
+  { onStepStatus, onRunningChange, onRunResult, onStepVars },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsGenerationRef = useRef(0);
   const outputBufferRef = useRef<string>('');
   // Max raw bytes kept in memory for replay (~10 MB)
   const OUTPUT_BUFFER_LIMIT = 10 * 1024 * 1024;
@@ -40,10 +42,12 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
   // Keep callbacks fresh without re-creating imperative handle
   const onStepStatusRef = useRef(onStepStatus);
   const onRunningChangeRef = useRef(onRunningChange);
+  const onRunResultRef = useRef(onRunResult);
   const onStepVarsRef = useRef(onStepVars);
   useLayoutEffect(() => {
     onStepStatusRef.current = onStepStatus;
     onRunningChangeRef.current = onRunningChange;
+    onRunResultRef.current = onRunResult;
     onStepVarsRef.current = onStepVars;
   });
 
@@ -101,6 +105,8 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       if (!term) return;
 
       wsRef.current?.close();
+      const generation = wsGenerationRef.current + 1;
+      wsGenerationRef.current = generation;
       term.write('\x1b[2J\x1b[H');
       outputBufferRef.current = '';
 
@@ -108,12 +114,12 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
 
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const token = getToken();
-      const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
-      const ws = new WebSocket(`${proto}//${location.host}/pty?pipeline=${pipelineId}${tokenParam}`);
+      const ws = new WebSocket(`${proto}//${location.host}/pty?pipeline=${pipelineId}`);
       ws.binaryType = 'arraybuffer';
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (token) ws.send(JSON.stringify({ type: 'auth', token }));
         if (fitAddonRef.current && termRef.current) {
           ws.send(`\x1b[RESIZE:${termRef.current.cols};${termRef.current.rows}]`);
         }
@@ -151,6 +157,10 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
               if (Object.keys(vars).length > 0) onStepVarsRef.current?.(+si, +sj, vars);
             } catch { /* ignore malformed */ }
             return '';
+          })
+          .replace(/\x01RUN_END:(success|failed|timeout|stopped)\x01\r?\n?/g, (_, result: RunResult) => {
+            onRunResultRef.current?.(result);
+            return '';
           });
 
         if (out) termRef.current.write(out);
@@ -182,6 +192,7 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       };
 
       ws.onclose = () => {
+        if (wsGenerationRef.current !== generation) return;
         // Flush any buffered partial (e.g. connection dropped mid-marker).
         // Complete any truncated marker by appending a closing \x01 so the regex
         // can fire (e.g. a STEP_END whose closing byte was never delivered).
@@ -194,6 +205,7 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       };
 
       ws.onerror = () => {
+        if (wsGenerationRef.current !== generation) return;
         wsRef.current = null;
         onRunningChangeRef.current(false);
       };
@@ -205,7 +217,11 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       outputBufferRef.current = '';
     },
     stop() {
+      wsGenerationRef.current += 1;
+      onRunResultRef.current?.('stopped');
       wsRef.current?.close();
+      wsRef.current = null;
+      onRunningChangeRef.current(false);
     },
     getBuffer() {
       return outputBufferRef.current;
@@ -219,6 +235,7 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       const reStart = /\x01STEP_START:(\d+):(\d+)\x01\r?\n?/g;
       const reEnd = /\x01STEP_END:(\d+):(\d+):(\d+)(?::(\d+))?\x01\r?\n?/g;
       const reVars = /\x01STEP_VARS:(\d+):(\d+):([^\x01]*)\x01\r?\n?/g;
+      const reRunEnd = /\x01RUN_END:(success|failed|timeout|stopped)\x01\r?\n?/g;
 
       let m: RegExpExecArray | null;
       while ((m = reStart.exec(data)) !== null) started.add(`${m[1]}:${m[2]}`);
@@ -239,12 +256,16 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
           if (Object.keys(vars).length > 0) onStepVarsRef.current?.(+m[1], +m[2], vars);
         } catch { /* ignore malformed */ }
       }
+      while ((m = reRunEnd.exec(data)) !== null) {
+        onRunResultRef.current?.(m[1] as RunResult);
+      }
 
       // Strip markers for terminal output
       const stripped = data
         .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
         .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
-        .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '');
+        .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
+        .replace(/\x01RUN_END:(?:success|failed|timeout|stopped)\x01\r?\n?/g, '');
       term.write('\x1b[2J\x1b[H');
       term.write(stripped);
       term.scrollToBottom();

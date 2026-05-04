@@ -29,6 +29,7 @@ export interface Pipeline {
 }
 
 export type StepStatus = 'waiting' | 'running' | 'done' | 'failed';
+export type RunResult = 'success' | 'failed' | 'timeout' | 'stopped';
 
 export interface PipelineRun {
   id: string;
@@ -37,7 +38,7 @@ export interface PipelineRun {
   startedAt: string;
   finishedAt: string;
   durationMs: number;
-  result: 'success' | 'failed' | 'timeout';
+  result: RunResult;
 }
 
 export interface Selection {

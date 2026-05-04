@@ -60,11 +60,11 @@ export default function SandboxModal({ command, onClose }: Props) {
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const token = getToken();
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
-    const ws = new WebSocket(`${proto}//${location.host}/sandbox${tokenParam}`);
+    const ws = new WebSocket(`${proto}//${location.host}/sandbox`);
     ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
+      if (token) ws.send(JSON.stringify({ type: 'auth', token }));
       ws.send(JSON.stringify({ cmd: command, cols: term.cols, rows: term.rows }));
     };
 

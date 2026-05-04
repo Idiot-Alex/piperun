@@ -3,31 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { dump as yamlDump, load as yamlLoad } from 'js-yaml';
 import { api } from '../api';
 import type { Pipeline, PipelineRun } from '../types';
-
-function validateYaml(raw: unknown): string | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'YAML 顶层必须是对象';
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.name !== 'string' || !obj.name.trim()) return '缺少必填字段 name（字符串）';
-  if (obj.stages !== undefined && !Array.isArray(obj.stages)) return 'stages 必须是数组';
-  const stages = (Array.isArray(obj.stages) ? obj.stages : []) as unknown[];
-  for (let si = 0; si < stages.length; si++) {
-    const stage = stages[si];
-    if (!stage || typeof stage !== 'object' || Array.isArray(stage)) return `阶段 ${si + 1} 格式错误（必须是对象）`;
-    const s = stage as Record<string, unknown>;
-    if (s.steps !== undefined && !Array.isArray(s.steps)) return `阶段 ${si + 1} 的 steps 必须是数组`;
-    const steps = (Array.isArray(s.steps) ? s.steps : []) as unknown[];
-    for (let sj = 0; sj < steps.length; sj++) {
-      const step = steps[sj];
-      if (!step || typeof step !== 'object' || Array.isArray(step)) return `阶段 ${si + 1} 步骤 ${sj + 1} 格式错误（必须是对象）`;
-      const st = step as Record<string, unknown>;
-      if (st.command !== undefined && typeof st.command !== 'string') return `阶段 ${si + 1} 步骤 ${sj + 1} 的 command 必须是字符串`;
-      if (st.timeout !== undefined && (typeof st.timeout !== 'number' || st.timeout < 0)) return `阶段 ${si + 1} 步骤 ${sj + 1} 的 timeout 必须是非负整数（秒）`;
-      if (st.retries !== undefined && (typeof st.retries !== 'number' || st.retries < 0 || st.retries > 10)) return `阶段 ${si + 1} 步骤 ${sj + 1} 的 retries 必须是 0-10 的整数`;
-    }
-  }
-  if (obj.env !== undefined && !Array.isArray(obj.env)) return 'env 必须是数组';
-  return null;
-}
+import { pipelineToYamlData, validatePipelineYaml } from '../pipelineYaml';
 
 export default function PipelinesPage() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -147,20 +123,7 @@ export default function PipelinesPage() {
   };
 
   const handleExport = (p: Pipeline) => {
-    const data = {
-      name: p.name,
-      description: p.description || undefined,
-      stages: p.stages.map(s => ({
-        name: s.name,
-        steps: s.steps.map(st => ({
-          name: st.name,
-          command: st.command || undefined,
-          continueOnError: st.continueOnError || undefined,
-          timeout: st.timeout ? st.timeout : undefined,
-          retries: st.retries ? st.retries : undefined,
-        })),
-      })),
-    };
+    const data = pipelineToYamlData(p);
     const yml = yamlDump(data, { lineWidth: 120, forceQuotes: false });
     const blob = new Blob([yml], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
@@ -184,7 +147,7 @@ export default function PipelinesPage() {
         setDeleteError(`YAML 解析失败：${yamlErr instanceof Error ? yamlErr.message : String(yamlErr)}`);
         return;
       }
-      const validationError = validateYaml(raw);
+      const validationError = validatePipelineYaml(raw);
       if (validationError) {
         setDeleteError(`导入失败：${validationError}`);
         return;
@@ -210,7 +173,7 @@ export default function PipelinesPage() {
         <div className="flex-1 gap-3">
           <div className="flex items-center gap-2">
             <img src="/logo.svg" alt="logo" className="w-7 h-7 rounded-lg" />
-            <span className="text-base font-bold tracking-tight">Pipeline UI</span>
+            <span className="text-base font-bold tracking-tight">PipeRun</span>
           </div>
           {!loading && !error && (
             <span className="text-xs text-base-content/30 hidden sm:inline">
@@ -383,8 +346,12 @@ export default function PipelinesPage() {
                         const r = lastRunMap[p.id];
                         return (
                           <span className="text-[11px] flex items-center gap-1">
-                            <span className={r.result === 'success' ? 'text-success' : 'text-error'}>
-                              {r.result === 'success' ? '✓' : '✗'}
+                            <span className={
+                              r.result === 'success' ? 'text-success' :
+                              r.result === 'timeout' ? 'text-warning' :
+                              r.result === 'stopped' ? 'text-base-content/50' : 'text-error'
+                            }>
+                              {r.result === 'success' ? '✓' : r.result === 'timeout' ? '⏱' : r.result === 'stopped' ? '■' : '✗'}
                             </span>
                             <span className="text-base-content/40">{formatRelative(r.startedAt)} · {formatDur(r.durationMs)}</span>
                           </span>
@@ -451,12 +418,14 @@ export default function PipelinesPage() {
                 {pRuns.map(r => (
                   <div key={r.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-base-200 text-sm">
                     <div className="flex items-center gap-2.5">
-                      {r.result === 'success'
-                        ? <span className="text-success font-bold text-base">✓</span>
-                        : r.result === 'timeout'
-                        ? <span className="text-warning font-bold text-base">⏱</span>
-                        : <span className="text-error font-bold text-base">✗</span>
-                      }
+	                      {r.result === 'success'
+	                        ? <span className="text-success font-bold text-base">✓</span>
+	                        : r.result === 'timeout'
+	                        ? <span className="text-warning font-bold text-base">⏱</span>
+	                        : r.result === 'stopped'
+	                        ? <span className="text-base-content/50 font-bold text-base">■</span>
+	                        : <span className="text-error font-bold text-base">✗</span>
+	                      }
                       <div>
                         <div className="text-xs text-base-content/60">
                           {new Date(r.startedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -466,8 +435,12 @@ export default function PipelinesPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-base-content/40">{formatDur(r.durationMs)}</span>
-                      <span className={`badge badge-xs ${r.result === 'success' ? 'badge-success' : r.result === 'timeout' ? 'badge-warning' : 'badge-error'}`}>
-                        {r.result === 'success' ? '成功' : r.result === 'timeout' ? '超时' : '失败'}
+	                      <span className={`badge badge-xs ${
+	                        r.result === 'success' ? 'badge-success' :
+	                        r.result === 'timeout' ? 'badge-warning' :
+	                        r.result === 'stopped' ? 'badge-neutral' : 'badge-error'
+	                      }`}>
+	                        {r.result === 'success' ? '成功' : r.result === 'timeout' ? '超时' : r.result === 'stopped' ? '已停止' : '失败'}
                       </span>
                       <button
                         className="btn btn-xs btn-ghost text-base-content/50"
@@ -501,10 +474,11 @@ export default function PipelinesPage() {
               </span>
               {logRun && (
                 <span className={`ml-2 badge badge-xs ${
-                  logRun.result === 'success' ? 'badge-success' :
-                  logRun.result === 'timeout' ? 'badge-warning' : 'badge-error'
-                }`}>
-                  {logRun.result === 'success' ? '成功' : logRun.result === 'timeout' ? '超时' : '失败'}
+	                  logRun.result === 'success' ? 'badge-success' :
+	                  logRun.result === 'timeout' ? 'badge-warning' :
+	                  logRun.result === 'stopped' ? 'badge-neutral' : 'badge-error'
+	                }`}>
+	                  {logRun.result === 'success' ? '成功' : logRun.result === 'timeout' ? '超时' : logRun.result === 'stopped' ? '已停止' : '失败'}
                 </span>
               )}
             </div>
@@ -524,8 +498,9 @@ export default function PipelinesPage() {
                   ? logContent
                       // eslint-disable-next-line no-control-regex
                       .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
-                      .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
-                      .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
+	                      .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
+	                      .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
+	                      .replace(/\x01RUN_END:(?:success|failed|timeout|stopped)\x01\r?\n?/g, '')
                       // Strip all ANSI/VT escape sequences:
                       .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC (title, hyperlinks)
                       .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')            // CSI (colors, cursor)

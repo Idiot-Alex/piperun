@@ -2,6 +2,7 @@ node_modules/
 dist/
 server/data/
 *.tmp
+*.tsbuildinfo
 .DS_Store
 .env
 .env.local

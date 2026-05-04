@@ -68,6 +68,17 @@ export default function EditorPage() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // Browser refresh / tab close confirmation for unsaved changes.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  });
+
   if (loadError) {
     return (
       <div className="flex justify-center items-center min-h-screen">

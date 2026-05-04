@@ -7,11 +7,17 @@ interface Props {
 
 type State = 'checking' | 'open' | 'gate';
 
+interface PingResponse {
+  authRequired: boolean;
+  remoteDisabled?: boolean;
+}
+
 export default function TokenGate({ children }: Props) {
   const [state, setState] = useState<State>('checking');
   const [input, setInput] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [blocked, setBlocked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -20,14 +26,21 @@ export default function TokenGate({ children }: Props) {
     async function init() {
       try {
         const r = await fetch('/api/ping');
-        const data: { authRequired: boolean } = await r.json();
+        const data: PingResponse = await r.json();
         if (cancelled) return;
         authIsRequired = data.authRequired;
-        if (!data.authRequired) {
+        if (data.remoteDisabled) {
+          setBlocked(true);
+          setErrorMsg('服务端未启用远程访问，请设置 API_TOKEN 后重启服务。');
+          setState('gate');
+        } else if (!data.authRequired) {
+          setBlocked(false);
           setState('open');
         } else if (getToken()) {
+          setBlocked(false);
           setState('open');
         } else {
+          setBlocked(false);
           setState('gate');
         }
       } catch {
@@ -104,31 +117,37 @@ export default function TokenGate({ children }: Props) {
             <h2 className="card-title text-xl">PipeRun</h2>
           </div>
           <p className="text-sm text-base-content/60">
-            此实例已启用访问控制，请输入 Token 以继续。
+            {blocked
+              ? '当前服务端配置阻止远程访问。'
+              : '此实例已启用访问控制，请输入 Token 以继续。'}
           </p>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <input
-              type="password"
-              className="input input-bordered w-full font-mono"
-              placeholder="输入 Bearer Token"
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              autoFocus
-              autoComplete="current-password"
-            />
-            {errorMsg && (
-              <p className="text-error text-sm">{errorMsg}</p>
-            )}
-            <button
-              type="submit"
-              className="btn btn-primary w-full"
-              disabled={verifying || !input.trim()}
-            >
-              {verifying
-                ? <span className="loading loading-spinner loading-sm"></span>
-                : '验证'}
-            </button>
-          </form>
+          {blocked ? (
+            <p className="text-error text-sm">{errorMsg}</p>
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+              <input
+                type="password"
+                className="input input-bordered w-full font-mono"
+                placeholder="输入 Bearer Token"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                autoFocus
+                autoComplete="current-password"
+              />
+              {errorMsg && (
+                <p className="text-error text-sm">{errorMsg}</p>
+              )}
+              <button
+                type="submit"
+                className="btn btn-primary w-full"
+                disabled={verifying || !input.trim()}
+              >
+                {verifying
+                  ? <span className="loading loading-spinner loading-sm"></span>
+                  : '验证'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
