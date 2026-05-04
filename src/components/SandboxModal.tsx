@@ -10,6 +10,8 @@ interface Props {
 
 export default function SandboxModal({ command, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -43,9 +45,16 @@ export default function SandboxModal({ command, onClose }: Props) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
-    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
 
-    const ro = new ResizeObserver(() => fit.fit());
+    const rafId = requestAnimationFrame(() => {
+      if (fitRef.current) fitRef.current.fit();
+    });
+
+    const ro = new ResizeObserver(() => {
+      if (fitRef.current && termRef.current) fitRef.current.fit();
+    });
     ro.observe(el);
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -65,9 +74,12 @@ export default function SandboxModal({ command, onClose }: Props) {
     };
 
     return () => {
+      cancelAnimationFrame(rafId);
       ro.disconnect();
       ws.close();
       term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally runs once on mount; command is captured at render time

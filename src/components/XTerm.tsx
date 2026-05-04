@@ -68,15 +68,24 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(containerRef.current);
-    fit.fit();
+    // Defer initial fit until the browser has finished layout so the container
+    // has real pixel dimensions. Calling fit() synchronously right after open()
+    // can hit xterm's internal dimension guard and throw.
+    const rafId = requestAnimationFrame(() => {
+      if (fitAddonRef.current) fitAddonRef.current.fit();
+    });
 
     termRef.current = term;
     fitAddonRef.current = fit;
 
-    const ro = new ResizeObserver(() => fitAddonRef.current?.fit());
+    const ro = new ResizeObserver(() => {
+      // Guard: terminal may have been disposed before this callback fires
+      if (fitAddonRef.current && termRef.current) fitAddonRef.current.fit();
+    });
     ro.observe(containerRef.current);
 
     return () => {
+      cancelAnimationFrame(rafId);
       ro.disconnect();
       wsRef.current?.close();
       term.dispose();
