@@ -267,7 +267,7 @@ export default function EditorPage() {
                 <span className="label-text font-medium">环境变量</span>
                 <button
                   className="btn btn-ghost btn-xs gap-1"
-                  onClick={() => setPipeline(prev => prev ? { ...prev, env: [...(prev.env ?? []), { key: '', value: '' }] } : prev)}
+                  onClick={() => update(prev => ({ ...prev, env: [...(prev.env ?? []), { key: '', value: '' }] }))}
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                   添加
@@ -284,8 +284,7 @@ export default function EditorPage() {
                         className="input input-bordered input-xs font-mono w-32 flex-shrink-0"
                         placeholder="KEY"
                         value={ev.key}
-                        onChange={e => setPipeline(prev => {
-                          if (!prev) return prev;
+                        onChange={e => update(prev => {
                           const env = [...prev.env];
                           env[i] = { ...env[i], key: e.target.value.replace(/[^A-Za-z0-9_]/g, '').toUpperCase() };
                           return { ...prev, env };
@@ -297,8 +296,7 @@ export default function EditorPage() {
                         className="input input-bordered input-xs font-mono flex-1 min-w-0"
                         placeholder="value"
                         value={ev.value}
-                        onChange={e => setPipeline(prev => {
-                          if (!prev) return prev;
+                        onChange={e => update(prev => {
                           const env = [...prev.env];
                           env[i] = { ...env[i], value: e.target.value };
                           return { ...prev, env };
@@ -306,11 +304,7 @@ export default function EditorPage() {
                       />
                       <button
                         className="btn btn-ghost btn-xs text-error/60 hover:text-error px-1"
-                        onClick={() => setPipeline(prev => {
-                          if (!prev) return prev;
-                          const env = prev.env.filter((_, j) => j !== i);
-                          return { ...prev, env };
-                        })}
+                        onClick={() => update(prev => ({ ...prev, env: prev.env.filter((_, j) => j !== i) }))}
                       >✕</button>
                     </div>
                   ))}
@@ -439,8 +433,9 @@ export default function EditorPage() {
                 placeholder="不限制"
                 value={step.timeout ?? ''}
                 onChange={e => {
-                  const v = e.target.value === '' ? undefined : Math.max(0, Math.floor(Number(e.target.value)));
-                  updateStep(selection.si, selection.sj!, { timeout: v });
+                  // Normalize 0 to undefined: server treats timeout <= 0 as "no limit"
+                  const n = e.target.value === '' ? undefined : Math.max(0, Math.floor(Number(e.target.value)));
+                  updateStep(selection.si, selection.sj!, { timeout: n === 0 ? undefined : n });
                 }}
               />
               <span className="text-xs text-base-content/40">0 或空 = 不限制</span>
@@ -461,8 +456,9 @@ export default function EditorPage() {
                 placeholder="不重试"
                 value={step.retries ?? ''}
                 onChange={e => {
-                  const v = e.target.value === '' ? undefined : Math.max(0, Math.min(10, Math.floor(Number(e.target.value))));
-                  updateStep(selection.si, selection.sj!, { retries: v });
+                  // Normalize 0 to undefined: server treats retries <= 0 as "no retry"
+                  const n = e.target.value === '' ? undefined : Math.max(0, Math.min(10, Math.floor(Number(e.target.value))));
+                  updateStep(selection.si, selection.sj!, { retries: n === 0 ? undefined : n });
                 }}
               />
               <span className="text-xs text-base-content/40">0 或空 = 不重试</span>
