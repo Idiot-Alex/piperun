@@ -403,6 +403,7 @@ const server = http.createServer(async (req, res) => {
     const MAX_LOG_BYTES = 50 * 1024 * 1024;
     const size = Math.min(stat.size, MAX_LOG_BYTES);
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': size });
+    if (size === 0) { res.end(); return; }
     fs.createReadStream(logPath, { start: 0, end: size - 1 }).pipe(res);
     return;
   }
@@ -685,7 +686,9 @@ wss.on('connection', (ws, req) => {
     const send = (data) => {
       const str = data.toString();
       if (ws.readyState === 1) ws.send(str);
-      logStream.write(str);
+      // Guard against write-after-end: logStream is closed by ws.on('close') when
+      // the user stops the run before the child exits naturally.
+      if (!logStream.closed) logStream.write(str);
     };
 
     child.stdout.on('data', send);
