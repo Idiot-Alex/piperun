@@ -44,7 +44,7 @@ node server/server.js  # 另一个终端启动后端
 ## 目录结构
 
 ```
-web-vite/
+piperun/
 ├── server/
 │   ├── server.js          # Node.js HTTP + WebSocket 服务
 │   └── data/
