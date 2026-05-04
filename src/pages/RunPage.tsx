@@ -64,8 +64,10 @@ export default function RunPage() {
   useEffect(() => {
     if (id) api.getPipeline(id).then(async p => {
       setPipeline(p);
+      // Cache key includes updatedAt so edits to the pipeline invalidate the old replay.
+      const cacheKey = `${id}:${p.updatedAt ?? ''}`;
       // 1. Try in-memory cache first (fast path, same session)
-      const cached = terminalOutputCache.get(id);
+      const cached = terminalOutputCache.get(cacheKey);
       if (cached) {
         setPendingReplay(cached);
         return;
@@ -76,7 +78,7 @@ export default function RunPage() {
         if (runs.length > 0) {
           const log = await api.getRunLog(runs[0].id);
           if (log) {
-            cacheSet(id, log);
+            cacheSet(cacheKey, log);
             setPendingReplay(log);
           }
         }
@@ -122,7 +124,8 @@ export default function RunPage() {
       // Save terminal output to cache when run finishes
       if (id) {
         const buf = xtermRef.current?.getBuffer();
-        if (buf) cacheSet(id, buf);
+        const cacheKey = `${id}:${pipeline?.updatedAt ?? ''}`;
+        if (buf) cacheSet(cacheKey, buf);
       }
       // Derive result from ref (always reflects the latest statusMap)
       const statuses = Object.values(statusMapRef.current);

@@ -179,12 +179,11 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
       };
 
       ws.onclose = () => {
-        // Flush any buffered partial (e.g. connection dropped mid-marker)
+        // Flush any buffered partial (e.g. connection dropped mid-marker).
+        // Complete any truncated marker by appending a closing \x01 so the regex
+        // can fire (e.g. a STEP_END whose closing byte was never delivered).
         if (partial) {
-          // Strip any orphaned/incomplete marker bytes before displaying
-          const flushed = partial.replace(/\x01[^\x01]*/g, '');
-          if (flushed && termRef.current) termRef.current.write(flushed);
-          outputBufferRef.current += partial;
+          processChunk(partial + '\x01');
           partial = '';
         }
         wsRef.current = null;
