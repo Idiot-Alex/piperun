@@ -77,8 +77,12 @@ function writePipelines(list) {
 let writeLock = Promise.resolve();
 
 function withLock(fn) {
-  writeLock = writeLock.then(fn).catch(() => {});
-  return writeLock;
+  // Chain fn off the current lock. The lock itself is reset even on error
+  // (so subsequent callers are never blocked), but the returned promise
+  // propagates the error to THIS caller instead of silently resolving.
+  const result = writeLock.then(fn);
+  writeLock = result.catch(() => {});
+  return result;
 }
 
 function readRuns() {
@@ -249,9 +253,12 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let tooLarge = false;
     req.on('data', c => {
+      if (tooLarge) return; // stop accumulating after limit
       size += c.length;
       if (size > MAX_BODY_BYTES) {
+        tooLarge = true;
         // Drain the socket so the connection stays usable, then reject.
         // Calling req.destroy() would also destroy res (shared socket) and
         // prevent the caller from sending a 413 response.
@@ -264,6 +271,7 @@ function readBody(req) {
       chunks.push(c);
     });
     req.on('end', () => {
+      if (tooLarge) return;
       try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
       catch (e) { reject(e); }
     });
