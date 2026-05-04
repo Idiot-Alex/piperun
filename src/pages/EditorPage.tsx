@@ -432,6 +432,28 @@ export default function EditorPage() {
             </div>
             <p className="text-xs text-base-content/35 mt-1">超时后步骤以退出码 143 终止</p>
           </div>
+
+          <div className="form-control flex-shrink-0">
+            <label className="label py-0 pb-1">
+              <span className="label-text font-medium">失败重试次数</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                className="input input-bordered input-sm w-28"
+                min={0}
+                max={10}
+                placeholder="不重试"
+                value={step.retries ?? ''}
+                onChange={e => {
+                  const v = e.target.value === '' ? undefined : Math.max(0, Math.min(10, Math.floor(Number(e.target.value))));
+                  updateStep(selection.si, selection.sj!, { retries: v });
+                }}
+              />
+              <span className="text-xs text-base-content/40">0 或空 = 不重试</span>
+            </div>
+            <p className="text-xs text-base-content/35 mt-1">步骤失败后自动重试，最多 10 次</p>
+          </div>
         </div>
       );
     }

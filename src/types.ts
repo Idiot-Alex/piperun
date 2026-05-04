@@ -4,6 +4,7 @@ export interface Step {
   command: string;
   continueOnError: boolean;
   timeout?: number; // seconds, 0 = no timeout
+  retries?: number; // retry count on failure, 0 = no retry
 }
 
 export interface Stage {

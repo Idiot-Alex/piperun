@@ -98,6 +98,8 @@ function sanitizePipeline(p) {
         continueOnError: Boolean(step.continueOnError),
         timeout: (typeof step.timeout === 'number' && step.timeout > 0)
           ? Math.min(Math.floor(step.timeout), 86400) : undefined,
+        retries: (typeof step.retries === 'number' && step.retries > 0)
+          ? Math.min(Math.floor(step.retries), 10) : undefined,
       })),
     })),
     createdAt: p.createdAt ?? new Date().toISOString(),
@@ -167,13 +169,29 @@ function buildBashScript(pipeline) {
       const call = (step.timeout > 0)
         ? `_with_timeout ${step.timeout} bash -c "$(declare -f ${fnName}); ${fnName}"`
         : fnName;
+      // Retry loop: attempt up to (retries+1) times on failure
+      const retries = step.retries > 0 ? step.retries : 0;
+      if (retries > 0) {
+        lines.push(`_retry_max=${retries}; _retry_n=0; _st=1`);
+        lines.push(`while [ $_retry_n -le $_retry_max ]; do`);
+        lines.push(`  [ $_retry_n -gt 0 ] && printf '\\033[33m[重试 %d/%d]\\033[0m\\n' $_retry_n $_retry_max`);
+        lines.push(`  ${call} && _st=0 && break`);
+        lines.push(`  _st=$?; _retry_n=$((_retry_n+1))`);
+        lines.push(`done`);
+      }
       if (step.continueOnError) {
-        lines.push(`${call} || true`);
+        if (retries > 0) {
+          lines.push('true'); // _st already set
+        } else {
+          lines.push(`${call} || true`);
+        }
         lines.push('_step_dt=$(( $(_ms) - _step_t0 ))');
         lines.push(`printf "\\x01STEP_END:${si}:${sj}:0:$_step_dt\\x01\\n"`);
       } else {
-        lines.push('_st=0');
-        lines.push(`${call} || _st=$?`);
+        if (retries === 0) {
+          lines.push('_st=0');
+          lines.push(`${call} || _st=$?`);
+        }
         lines.push('_step_dt=$(( $(_ms) - _step_t0 ))');
         lines.push(`printf "\\x01STEP_END:${si}:${sj}:$_st:$_step_dt\\x01\\n"`);
         lines.push('[ "$_st" -eq 0 ] || exit "$_st"');
@@ -407,13 +425,6 @@ function handleSandbox(ws) {
     const send = (d) => { if (ws.readyState === 1) ws.send(d.toString()); };
     child.stdout.on('data', send);
     child.stderr.on('data', send);
-
-    // Pipe subsequent WebSocket messages (keystrokes) to bash stdin
-    ws.on('message', (data) => {
-      if (child && child.stdin.writable) {
-        child.stdin.write(data.toString());
-      }
-    });
 
     timer = setTimeout(() => {
       try { child?.kill('SIGTERM'); } catch { /* noop */ }
