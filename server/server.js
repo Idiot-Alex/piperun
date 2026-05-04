@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
@@ -14,6 +14,16 @@ const RUNS_FILE = path.join(DATA_DIR, 'runs.json');
 const LOGS_DIR = path.join(DATA_DIR, 'runs');
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 const PORT = Number(process.env.PORT ?? 3001);
+
+// Configurable allowed origins (comma-separated). Defaults to common local dev origins.
+const ALLOWED_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,http://localhost:3001,http://127.0.0.1:5173,http://127.0.0.1:3001')
+    .split(',').map(s => s.trim()).filter(Boolean)
+);
+
+// Optional API token for non-localhost access. If set, remote requests must supply
+// "Authorization: Bearer <token>". Local (127.x / ::1) requests are always allowed.
+const API_TOKEN = process.env.API_TOKEN ?? null;
 
 const PIPELINE_ID_RE = /^[a-f0-9]{16}$/;
 const MIME = {
@@ -249,14 +259,45 @@ function serveStatic(res, filePath) {
 // ── HTTP server ──────────────────────────────────────────────────────────────
 let runningPipelineId = null;
 
+/** Returns true when the TCP connection originates from the loopback interface. */
+function isLocalRequest(req) {
+  const addr = req.socket.remoteAddress ?? '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+/** Constant-time token comparison to prevent timing attacks. */
+function checkToken(provided) {
+  if (!API_TOKEN) return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(API_TOKEN);
+  if (a.length === 0 || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost`);
   const { pathname } = url;
 
-  // CORS for dev proxy
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // CORS — reflect origin only when it is in the allowlist
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // Auth guard — non-localhost API requests require a valid Bearer token
+  if (pathname.startsWith('/api') && !isLocalRequest(req)) {
+    if (!API_TOKEN) {
+      return json(res, 403, { error: 'Remote access is disabled. Set API_TOKEN to enable.' });
+    }
+    const authHeader = req.headers['authorization'] ?? '';
+    const provided = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (!checkToken(provided)) {
+      return json(res, 401, { error: 'Unauthorized' });
+    }
+  }
 
   // ── REST API ──────────────────────────────────────────────────────────────
   if (pathname === '/api/runs' && req.method === 'GET') {
@@ -453,16 +494,29 @@ function handleSandbox(ws) {
 server.on('upgrade', (req, socket, head) => {
   // Reject WebSocket connections from non-local origins to prevent CSRF attacks
   const origin = req.headers.origin;
-  const ALLOWED_ORIGINS = new Set(['http://localhost:5173', 'http://localhost:3001', 'http://127.0.0.1:5173', 'http://127.0.0.1:3001']);
   if (origin && !ALLOWED_ORIGINS.has(origin)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
     socket.destroy();
     return;
   }
-  const url = new URL(req.url, 'http://localhost');
-  if (url.pathname === '/pty') {
+  // Auth guard for non-localhost WebSocket connections
+  const wsUrl = new URL(req.url, 'http://localhost');
+  if (!isLocalRequest(req)) {
+    if (!API_TOKEN) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const provided = wsUrl.searchParams.get('token') ?? '';
+    if (!checkToken(provided)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+  }
+  if (wsUrl.pathname === '/pty') {
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
-  } else if (url.pathname === '/sandbox') {
+  } else if (wsUrl.pathname === '/sandbox') {
     wss.handleUpgrade(req, socket, head, ws => handleSandbox(ws));
   } else {
     socket.destroy();

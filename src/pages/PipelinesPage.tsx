@@ -491,7 +491,12 @@ export default function PipelinesPage() {
               <pre className="text-xs font-mono text-[#d4d4d4] whitespace-pre-wrap break-all leading-5">
                 {logContent
                   // eslint-disable-next-line no-control-regex
-                  ? logContent.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+                  ? logContent
+                      .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
+                      .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')
+                      .replace(/\x01STEP_VARS:\d+:\d+:[^\x01]*\x01\r?\n?/g, '')
+                      .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+                      .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
                   : ''}
               </pre>
             )}

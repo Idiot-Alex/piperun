@@ -26,6 +26,7 @@ export default function EditorPage() {
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [sandboxCmd, setSandboxCmd] = useState<string | null>(null);
   const savedRef = useRef(false);
   const initialSnapshotRef = useRef<string>('');
@@ -46,7 +47,7 @@ export default function EditorPage() {
       api.getPipeline(id).then(p => {
         setPipeline(p);
         initialSnapshotRef.current = JSON.stringify(p);
-      }).catch(console.error);
+      }).catch(e => setLoadError(e instanceof Error ? e.message : '加载失败'));
     } else {
       initialSnapshotRef.current = JSON.stringify(emptyPipeline());
     }
@@ -63,6 +64,17 @@ export default function EditorPage() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
+
+  if (loadError) {
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="alert alert-error max-w-sm flex-col gap-3">
+          <span>加载失败：{loadError}</span>
+          <button className="btn btn-sm" onClick={() => navigate('/')}>返回首页</button>
+        </div>
+      </div>
+    );
+  }
 
   if (!pipeline) {
     return (

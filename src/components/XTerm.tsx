@@ -105,14 +105,20 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
         }
       };
 
-      ws.onmessage = (e: MessageEvent) => {
-        if (!termRef.current) return;
-        const chunk =
-          typeof e.data === 'string'
-            ? e.data
-            : new TextDecoder().decode(e.data as ArrayBuffer);
+      // Buffer for cross-frame marker reassembly.
+      // WebSocket frames can split a \x01MARKER\x01 sequence across two frames,
+      // causing the partial bytes to render as visible garbage in the terminal.
+      // We hold back anything from the last unpaired \x01 until the next frame.
+      let partial = '';
 
-        const out = chunk
+      const processChunk = (toProcess: string) => {
+        if (!toProcess || !termRef.current) return;
+
+        // outputBufferRef stores the RAW (pre-strip) content so that replay()
+        // can recover step statuses from the same data that the server log holds.
+        outputBufferRef.current += toProcess;
+
+        const out = toProcess
           .replace(/\x01STEP_START:(\d+):(\d+)\x01\r?\n?/g, (_, si, sj) => {
             onStepStatusRef.current(+si, +sj, 'running');
             return '';
@@ -128,14 +134,44 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
             } catch { /* ignore malformed */ }
             return '';
           });
-        if (out) {
-          termRef.current.write(out);
-          outputBufferRef.current += out;
-        }
+
+        if (out) termRef.current.write(out);
         termRef.current.scrollToBottom();
       };
 
+      ws.onmessage = (e: MessageEvent) => {
+        if (!termRef.current) return;
+        const raw =
+          typeof e.data === 'string'
+            ? e.data
+            : new TextDecoder().decode(e.data as ArrayBuffer);
+
+        const combined = partial + raw;
+
+        // Each complete marker is wrapped by exactly two \x01 bytes.
+        // If the total count is odd, the last \x01 is an unclosed opener
+        // (the frame was cut mid-marker). Hold that suffix back until the
+        // next frame arrives so regexes always see complete markers.
+        const sohCount = (combined.match(/\x01/g) ?? []).length;
+        if (sohCount % 2 === 1) {
+          const lastSoh = combined.lastIndexOf('\x01');
+          processChunk(combined.slice(0, lastSoh));
+          partial = combined.slice(lastSoh);
+        } else {
+          processChunk(combined);
+          partial = '';
+        }
+      };
+
       ws.onclose = () => {
+        // Flush any buffered partial (e.g. connection dropped mid-marker)
+        if (partial) {
+          // Strip any orphaned/incomplete marker bytes before displaying
+          const flushed = partial.replace(/\x01[^\x01]*/g, '');
+          if (flushed && termRef.current) termRef.current.write(flushed);
+          outputBufferRef.current += partial;
+          partial = '';
+        }
         wsRef.current = null;
         onRunningChangeRef.current(false);
       };
@@ -160,7 +196,34 @@ const XTerm = forwardRef<XTermHandle, Props>(function XTerm(
     replay(data: string) {
       const term = termRef.current;
       if (!term) return;
-      // Strip protocol markers (log file contains raw bash output)
+
+      // Parse protocol markers to reconstruct step statuses for historical runs
+      const started = new Set<string>();
+      const reStart = /\x01STEP_START:(\d+):(\d+)\x01\r?\n?/g;
+      const reEnd = /\x01STEP_END:(\d+):(\d+):(\d+)(?::(\d+))?\x01\r?\n?/g;
+      const reVars = /\x01STEP_VARS:(\d+):(\d+):([^\x01]*)\x01\r?\n?/g;
+
+      let m: RegExpExecArray | null;
+      while ((m = reStart.exec(data)) !== null) started.add(`${m[1]}:${m[2]}`);
+
+      while ((m = reEnd.exec(data)) !== null) {
+        const [, si, sj, code, dt] = m;
+        started.delete(`${si}:${sj}`);
+        onStepStatusRef.current(+si, +sj, +code === 0 ? 'done' : 'failed', dt !== undefined ? +dt : undefined);
+      }
+      // Steps that started but never got an END marker were interrupted mid-run
+      for (const key of started) {
+        const [si, sj] = key.split(':');
+        onStepStatusRef.current(+si, +sj, 'failed');
+      }
+      while ((m = reVars.exec(data)) !== null) {
+        try {
+          const vars = JSON.parse(m[3]) as Record<string, string>;
+          if (Object.keys(vars).length > 0) onStepVarsRef.current?.(+m[1], +m[2], vars);
+        } catch { /* ignore malformed */ }
+      }
+
+      // Strip markers for terminal output
       const stripped = data
         .replace(/\x01STEP_START:\d+:\d+\x01\r?\n?/g, '')
         .replace(/\x01STEP_END:\d+:\d+:\d+(?::\d+)?\x01\r?\n?/g, '')

@@ -41,9 +41,13 @@ export default function RunPage() {
   const [running, setRunning] = useState(false);
   const [totalDuration, setTotalDuration] = useState<number | null>(null);
   const [runResult, setRunResult] = useState<'success' | 'failed' | null>(null);
+  // Log data waiting to be replayed once XTerm mounts (after pipeline state is set)
+  const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const xtermRef = useRef<XTermHandle>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const runStartRef = useRef<number>(0);
+  // Mirror of statusMap kept in sync for use in callbacks without stale closures
+  const statusMapRef = useRef<StatusMap>({});
 
   useEffect(() => {
     if (id) api.getPipeline(id).then(async p => {
@@ -51,7 +55,7 @@ export default function RunPage() {
       // 1. Try in-memory cache first (fast path, same session)
       const cached = terminalOutputCache.get(id);
       if (cached) {
-        xtermRef.current?.replay(cached);
+        setPendingReplay(cached);
         return;
       }
       // 2. Fallback: fetch latest run log from server (persists across refresh/restart)
@@ -61,15 +65,28 @@ export default function RunPage() {
           const log = await api.getRunLog(runs[0].id);
           if (log) {
             terminalOutputCache.set(id, log);
-            xtermRef.current?.replay(log);
+            setPendingReplay(log);
           }
         }
       } catch { /* no log available, terminal stays empty */ }
     }).catch(console.error);
   }, [id]);
 
+  // Replay log after XTerm mounts (pipeline state change causes XTerm to mount,
+  // so we can't call replay() in the same tick as setPipeline())
+  useEffect(() => {
+    if (pendingReplay === null) return;
+    if (!xtermRef.current) return;
+    xtermRef.current.replay(pendingReplay);
+    setPendingReplay(null);
+  }, [pendingReplay, pipeline]);
+
   const handleStepStatus = useCallback((si: number, sj: number, status: StepStatus, durationMs?: number) => {
-    setStatusMap(prev => ({ ...prev, [`${si}:${sj}`]: status }));
+    setStatusMap(prev => {
+      const next = { ...prev, [`${si}:${sj}`]: status };
+      statusMapRef.current = next;
+      return next;
+    });
     if (durationMs !== undefined) {
       setDurationMap(prev => ({ ...prev, [`${si}:${sj}`]: durationMs }));
     }
@@ -95,13 +112,10 @@ export default function RunPage() {
         const buf = xtermRef.current?.getBuffer();
         if (buf) terminalOutputCache.set(id, buf);
       }
-      // Derive result from statusMap snapshot via a callback to get latest state
-      setStatusMap(prev => {
-        const statuses = Object.values(prev);
-        if (statuses.length > 0 && statuses.some(s => s === 'failed')) setRunResult('failed');
-        else if (statuses.length > 0) setRunResult('success');
-        return prev;
-      });
+      // Derive result from ref (always reflects the latest statusMap)
+      const statuses = Object.values(statusMapRef.current);
+      if (statuses.length > 0 && statuses.some(s => s === 'failed')) setRunResult('failed');
+      else if (statuses.length > 0) setRunResult('success');
     }
     setRunning(r);
   }, []);
@@ -113,6 +127,7 @@ export default function RunPage() {
   const startRun = useCallback(() => {
     if (!pipeline || running) return;
     setStatusMap({});
+    statusMapRef.current = {};
     setDurationMap({});
     setVarsMap({});
     setTotalDuration(null);
